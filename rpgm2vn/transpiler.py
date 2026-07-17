@@ -77,14 +77,14 @@ class RenPyTranspiler:
             if event_lines:
                 event_blocks.append((event_key, event_lines))
         if event_blocks:
-            map_label = [f"label map{map_id:03d}:"]
+            map_label = [f"label map{map_id:03d}:", "    $ renpy.pause(0, hard=False)"]
             for event_key, _ in event_blocks:
                 map_label.append(f"    call {event_key}")
             map_label.append("    return")
             blocks.append((f"map{map_id:03d}", map_label))
             blocks.extend(event_blocks)
         else:
-            blocks.append((f"map{map_id:03d}", [f"label map{map_id:03d}:", "    return"]))
+            blocks.append((f"map{map_id:03d}", [f"label map{map_id:03d}:", "    $ renpy.pause(0, hard=False)", "    return"]))
         return blocks
 
     def transpile_common_event(self, ce_id):
@@ -98,6 +98,7 @@ class RenPyTranspiler:
         body, _ = self._process_block(commands, 0, -1, 1, f"ce{ce_id}")
         if not body or body[-1].strip() != "return":
             body.append("    return")
+        body.insert(0, "    $ renpy.pause(0, hard=False)")
         lines.extend(["    " + ln for ln in body])
         return lines
 
@@ -114,6 +115,7 @@ class RenPyTranspiler:
             return []
         if body[-1].strip() != "return":
             body.append("    return")
+        body.insert(0, "    $ renpy.pause(0, hard=False)")
         return [f"label map{map_id:03d}_event{event_id:03d}:"] + ["    " + ln for ln in body]
 
     def _process_block(self, commands, i, parent_editor_indent, renpy_indent, ctx):

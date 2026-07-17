@@ -110,6 +110,9 @@ init -1 python:
     config.exit_transition = dissolve
     config.intra_transition = dissolve
     config.window = "auto"
+    config.screen_width = 1920
+    config.screen_height = 1080
+    config.default_fullscreen = True
 
 init python:
     build.name = "{safe_name}"
@@ -195,7 +198,7 @@ label before_main_menu:
     $ renpy.session["_renpg_splash_shown"] = True
     scene black
     with Pause(0.5)
-    show renpg_splash at truecenter
+    show renpg_splash at Transform(xysize=(config.screen_width, config.screen_height), fit="contain", xalign=0.5, yalign=0.5)
     with dissolve
     pause 2.5
     hide renpg_splash
