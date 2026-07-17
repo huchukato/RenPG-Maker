@@ -59,7 +59,12 @@ class AssetManager:
             if not os.path.isdir(src):
                 continue
             base = rel.split("/", 1)[1] if "/" in rel else ""
-            dest = os.path.join(dest_root, base)
+            # Le immagini di Show Picture sono referenziate come identificatori piatti,
+            # quindi il contenuto di img/pictures va messo direttamente in game/images.
+            if base == "pictures":
+                dest = dest_root
+            else:
+                dest = os.path.join(dest_root, base)
             os.makedirs(dest, exist_ok=True)
             for root, _, files in os.walk(src):
                 for fname in files:
@@ -68,8 +73,14 @@ class AssetManager:
                     src_path = os.path.join(root, fname)
                     ext = os.path.splitext(fname)[1].lower()
                     rel_path = os.path.relpath(src_path, src)
-                    safe_name = self._safe_filename(rel_path)
+                    if base == "pictures":
+                        safe_name = self._safe_picture_name(rel_path)
+                    else:
+                        safe_name = self._safe_filename(rel_path)
                     dst_path = os.path.join(dest, safe_name)
+                    dst_dir = os.path.dirname(dst_path)
+                    if dst_dir:
+                        os.makedirs(dst_dir, exist_ok=True)
                     if ext in self.ENCRYPTED_EXTS:
                         if self.encryption_key:
                             self._decrypt_file(src_path, dst_path, ext)
@@ -121,3 +132,15 @@ class AssetManager:
         safe = [re.sub(r"[^0-9A-Za-z_.-]", "_", p).strip("_.") for p in parts]
         safe = [p for p in safe if p]
         return "/".join(safe) if safe else "asset"
+
+    def _safe_picture_name(self, rel_path):
+        """Appiattisce e sanifica il nome di un'immagine Show Picture,
+        usando le stesse regole di _safe_identifier di transplier.py."""
+        base, ext = os.path.splitext(rel_path.replace("\\", "/"))
+        safe = re.sub(r"[^0-9A-Za-z_]+", "_", base)
+        safe = re.sub(r"_+", "_", safe).strip("_")
+        if not safe:
+            safe = "asset"
+        elif safe[0].isdigit():
+            safe = "_" + safe
+        return safe + ext
