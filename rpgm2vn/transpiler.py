@@ -468,9 +468,10 @@ class RenPyTranspiler:
         return [f"$ party_members.remove({actor_id}) if {actor_id} in party_members else None"]
 
     def _handle_transfer(self, params):
-        if not params:
+        if not params or len(params) < 2:
             return ["return"]
-        map_id = params[0]
+        # MZ Transfer Player: [vehicle, mapId, x, y, direction, fadeType]
+        map_id = params[1]
         if map_id == 0 or map_id not in self.data.map_cache:
             return ["return"]
         return [f"call map{map_id:03d}"]
@@ -609,16 +610,23 @@ class RenPyTranspiler:
         plugin = params[0] if params else ""
         cmd = params[1] if len(params) > 1 else ""
         if plugin == "DK_Video_Player":
-            arg = params[2] if len(params) > 2 else ""
-            arg = self._safe_filename(arg)
-            if cmd == "LoadVideo" and arg:
-                return [f'$ _renpg_video = rpgm_movie_path("movies/{arg}")']
+            args = params[3] if len(params) > 3 and isinstance(params[3], dict) else {}
+            src = self._safe_filename(args.get("src", ""))
+            loop = str(args.get("loop", "true")).lower() in ("true", "1", "yes")
+            wait = str(args.get("wait", "false")).lower() in ("true", "1", "yes")
+            if cmd == "LoadVideo" and src:
+                return [f'$ _renpg_video = rpgm_movie_path("movies/{src}")']
             if cmd == "PlayVideo":
                 lines = []
-                if arg:
-                    lines.append(f'$ _renpg_video = rpgm_movie_path("movies/{arg}")')
-                lines.append("if _renpg_video:")
-                lines.append('    show expression Transform(Movie(play=_renpg_video), xysize=(config.screen_width, config.screen_height), fit="contain", xalign=0.5, yalign=0.5) as renpg_video')
+                if src:
+                    lines.append(f'$ _renpg_video = rpgm_movie_path("movies/{src}")')
+                if wait:
+                    lines.append("if _renpg_video:")
+                    lines.append("    $ rpgm_play_movie(_renpg_video)")
+                else:
+                    lines.append("if _renpg_video:")
+                    loop_arg = f", loop={loop}" if not loop else ""
+                    lines.append(f'    show expression Transform(Movie(play=_renpg_video{loop_arg}), xysize=(config.screen_width, config.screen_height), fit="contain", xalign=0.5, yalign=0.5) as renpg_video')
                 return lines
             if cmd == "StopVideo":
                 return ["hide renpg_video"]

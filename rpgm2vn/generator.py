@@ -144,6 +144,9 @@ init python:
     build.package("linux", "tar.bz2", "linux renpy all")
 
     def rpgm_play_movie(base):
+        if base and "." in base.rsplit("/", 1)[-1] and renpy.loadable(base):
+            renpy.movie_cutscene(base)
+            return
         for ext in (".mp4", ".webm", ".ogv", ".mkv"):
             path = base + ext
             if renpy.loadable(path):
@@ -153,12 +156,12 @@ init python:
     def rpgm_movie_path(base):
         name = base.rsplit("/", 1)[-1]
         if "." in name:
-            return base
+            return base if renpy.loadable(base) else None
         for ext in (".mp4", ".webm", ".ogv", ".mkv"):
             path = base + ext
             if renpy.loadable(path):
                 return path
-        return base + ".webm"
+        return None
 '''
 
     def _script_rpy(self, character_ids, blocks):
