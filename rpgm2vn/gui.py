@@ -1,5 +1,6 @@
 """Interfaccia grafica per RenPG Maker basata su customtkinter."""
 
+import json
 import re
 import sys
 import threading
@@ -28,12 +29,14 @@ COLOR_TEAL = "#146496"
 
 LOGO_PATH = Path(__file__).resolve().parent.parent / "img" / "logo_256.png"
 ICON_PATH = Path(__file__).resolve().parent.parent / "img" / "icon.iconset" / "icon_256x256.png"
+CONFIG_PATH = Path.home() / ".renpgmaker.json"
 
 
 TEXTS = {
     "en": {
         "game": "Game",
         "output": "Output",
+        "output_ph": "Base output folder",
         "app_btn": ".app",
         "folder_btn": "Folder",
         "browse_btn": "Browse",
@@ -82,6 +85,7 @@ TEXTS = {
     "it": {
         "game": "Gioco",
         "output": "Output",
+        "output_ph": "Cartella base di output",
         "app_btn": ".app",
         "folder_btn": "Cartella",
         "browse_btn": "Sfoglia",
@@ -130,6 +134,7 @@ TEXTS = {
     "es": {
         "game": "Juego",
         "output": "Salida",
+        "output_ph": "Carpeta base de salida",
         "app_btn": ".app",
         "folder_btn": "Carpeta",
         "browse_btn": "Examinar",
@@ -274,6 +279,7 @@ class RenPGMakerApp(ctk.CTk):
         self._set_icon_and_logo()
         self._build_ui()
         self._update_texts()
+        self._load_settings()
 
     def _set_icon_and_logo(self):
         self._icon_ref = None
@@ -694,6 +700,28 @@ class RenPGMakerApp(ctk.CTk):
         if path:
             self.output_entry.delete(0, ctk.END)
             self.output_entry.insert(0, path)
+            self._save_output_root(path)
+
+    def _load_settings(self):
+        try:
+            if CONFIG_PATH.is_file():
+                cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+                output_root = cfg.get("output_root", "")
+                if output_root:
+                    self.output_entry.delete(0, ctk.END)
+                    self.output_entry.insert(0, output_root)
+        except Exception:
+            pass
+
+    def _save_output_root(self, path: str):
+        try:
+            cfg = {}
+            if CONFIG_PATH.is_file():
+                cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            cfg["output_root"] = str(Path(path).resolve())
+            CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     def _download_sdk(self):
         self._text_refs["convert"].configure(state="disabled")
@@ -766,6 +794,18 @@ class RenPGMakerApp(ctk.CTk):
             )
             return
 
+        # Calcola la sottocartella del progetto dal titolo del gioco.
+        system_json = data_dir / "System.json"
+        raw_title = "RPGM VN"
+        if system_json.is_file():
+            try:
+                with open(system_json, "r", encoding="utf-8-sig") as f:
+                    raw_title = json.load(f).get("gameTitle") or raw_title
+            except Exception:
+                pass
+        safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", raw_title).lower() or "rpgm_vn"
+        project_dir = Path(output_raw) / safe_name
+
         options: dict = {"convert_dialogue_prefix": not self.no_prefix_var.get()}
 
         start_map = self.start_map_entry.get().strip()
@@ -794,7 +834,7 @@ class RenPGMakerApp(ctk.CTk):
 
         thread = threading.Thread(
             target=self._run_convert_and_build,
-            args=(data_dir, Path(output_raw), options),
+            args=(data_dir, project_dir, options),
             daemon=True,
         )
         thread.start()
