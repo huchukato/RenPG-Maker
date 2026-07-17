@@ -53,10 +53,10 @@ La GUI usa una palette ispirata al logo del progetto, con il logo ingrandito in 
 
 Oltre al workflow **Converti e Builda** della GUI, puoi creare bundle standalone per la piattaforma che preferisci:
 
-### Sorgenti (`build.sh`)
+### Sorgenti (`build/build.sh`)
 
 ```bash
-./build.sh
+./build/build.sh
 ```
 
 Genera `dist/RenPGMaker-v0.1.0.zip` con i file sorgente del progetto, pronto per essere distribuito o eseguito manualmente.

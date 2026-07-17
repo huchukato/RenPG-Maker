@@ -55,10 +55,10 @@ The GUI uses a color palette inspired by the project logo, with the logo display
 
 In addition to the GUI's **Convert & Build** workflow, you can build standalone bundles for the platform of your choice:
 
-### Source release (`build.sh`)
+### Source release (`build/build.sh`)
 
 ```bash
-./build.sh
+./build/build.sh
 ```
 
 Generates `dist/RenPGMaker-v0.1.0.zip` with the project source files, ready to be distributed or run manually.
