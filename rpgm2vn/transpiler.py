@@ -608,6 +608,20 @@ class RenPyTranspiler:
             return []
         plugin = params[0] if params else ""
         cmd = params[1] if len(params) > 1 else ""
+        if plugin == "DK_Video_Player":
+            arg = params[2] if len(params) > 2 else ""
+            arg = self._safe_filename(arg)
+            if cmd == "LoadVideo" and arg:
+                return [f'$ _renpg_video = rpgm_movie_path("movies/{arg}")']
+            if cmd == "PlayVideo":
+                lines = []
+                if arg:
+                    lines.append(f'$ _renpg_video = rpgm_movie_path("movies/{arg}")')
+                lines.append("if _renpg_video:")
+                lines.append('    show expression Transform(Movie(play=_renpg_video), xysize=(config.screen_width, config.screen_height), fit="contain", xalign=0.5, yalign=0.5) as renpg_video')
+                return lines
+            if cmd == "StopVideo":
+                return ["hide renpg_video"]
         return [f"# MZ Plugin {plugin}: {cmd}"]
 
     def _format_text(self, text):
@@ -622,6 +636,8 @@ class RenPyTranspiler:
         text = text.replace("%", "%%")
         text = text.replace("\n", "\\n")
         text = text.replace("\r", "")
+        # Ripristina le sequenze \n (raddoppiate sopra) affinché Ren'Py le interpreti come a capo.
+        text = text.replace("\\\\n", "\\n")
         return text
 
     def _unescape(self, text):
@@ -635,6 +651,8 @@ class RenPyTranspiler:
         s = s.replace('"', '\\"')
         s = s.replace("%", "%%")
         s = s.replace("\n", "\\n")
+        # Ripristina le sequenze \n (raddoppiate sopra) affinché Ren'Py le interpreti come a capo.
+        s = s.replace("\\\\n", "\\n")
         return f'"{s}"'
 
     def _safe(self, s):

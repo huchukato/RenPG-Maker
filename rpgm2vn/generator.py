@@ -149,6 +149,16 @@ init python:
             if renpy.loadable(path):
                 renpy.movie_cutscene(path)
                 return
+
+    def rpgm_movie_path(base):
+        name = base.rsplit("/", 1)[-1]
+        if "." in name:
+            return base
+        for ext in (".mp4", ".webm", ".ogv", ".mkv"):
+            path = base + ext
+            if renpy.loadable(path):
+                return path
+        return base + ".webm"
 '''
 
     def _script_rpy(self, character_ids, blocks):
@@ -160,6 +170,7 @@ init python:
         for _i in range(1, max_sw + 1):
             out.append(f"default rpgm_switch_{_i} = False")
         out.append("default party_members = []")
+        out.append("default _renpg_video = None")
         out.append("")
 
         # Character definitions
