@@ -59,9 +59,9 @@ class AssetManager:
             if not os.path.isdir(src):
                 continue
             base = rel.split("/", 1)[1] if "/" in rel else ""
-            # Le immagini di Show Picture sono referenziate come identificatori piatti,
-            # quindi il contenuto di img/pictures va messo direttamente in game/images.
-            if base == "pictures":
+            # Immagini referenziate come identificatori piatti (Show Picture, parallassi, title)
+            # vanno messe direttamente nella radice di game/images.
+            if base in ("pictures", "parallaxes", "titles1", "titles2"):
                 dest = dest_root
             else:
                 dest = os.path.join(dest_root, base)
@@ -73,7 +73,7 @@ class AssetManager:
                     src_path = os.path.join(root, fname)
                     ext = os.path.splitext(fname)[1].lower()
                     rel_path = os.path.relpath(src_path, src)
-                    if base == "pictures":
+                    if base in ("pictures", "parallaxes", "titles1", "titles2"):
                         safe_name = self._safe_picture_name(rel_path)
                     else:
                         safe_name = self._safe_filename(rel_path)
