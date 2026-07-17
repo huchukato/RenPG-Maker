@@ -127,7 +127,7 @@ init -1 python:
     config.window = "auto"
     config.screen_width = 1920
     config.screen_height = 1080
-    config.default_fullscreen = True
+    config.default_fullscreen = False
 
 init python:
     build.name = "{safe_name}"
@@ -196,12 +196,18 @@ init python:
 
     def _copy_template(self, game_dir):
         """Copia screens.rpy, gui.rpy, gui/ e tl/ dal template Ren'Py."""
-        if not self.template_dir:
+        src = Path(self.template_dir) if self.template_dir else None
+        if not src or not src.is_dir():
+            # Fallback al template GUI di default incluso nell'SDK.
+            src = Path(__file__).resolve().parent.parent / "renpy-sdk" / "gui" / "game"
+            rels = ("screens.rpy", "gui.rpy", "gui")
+        else:
+            rels = ("screens.rpy", "gui.rpy", "gui", "tl")
+        if not src.is_dir():
             return
-        src = Path(self.template_dir)
         if (src / "game").is_dir():
             src = src / "game"
-        for rel in ("screens.rpy", "gui.rpy", "gui", "tl"):
+        for rel in rels:
             src_path = src / rel
             dst_path = Path(game_dir) / rel
             if not src_path.exists():
@@ -241,8 +247,6 @@ label before_main_menu:
     pause 2.5
     hide renpg_splash
     with dissolve
-    scene black
-    with Pause(0.3)
     return
 ''')
 
