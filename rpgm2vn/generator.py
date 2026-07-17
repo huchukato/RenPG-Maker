@@ -122,7 +122,7 @@ init python:
 
     build.package("pc", "zip", "windows linux mac renpy all")
     build.package("win", "zip", "windows renpy all")
-    build.package("mac", "app", "mac renpy all")
+    build.package("mac", "app-zip", "mac renpy all")
     build.package("linux", "tar.bz2", "linux renpy all")
 
     def rpgm_play_movie(base):
