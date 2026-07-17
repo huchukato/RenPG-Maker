@@ -865,9 +865,7 @@ class RenPGMakerApp(ctk.CTk):
 
     def _run_convert_and_build(self, data_dir: Path, output_dir: Path, options: dict):
         try:
-            template_dir = output_dir.parent / "SinfoniaDelSerpente"
-            template_dir = str(template_dir) if template_dir.is_dir() else None
-            generator = RenpyProjectGenerator(str(data_dir), str(output_dir), options, template_dir=template_dir, cancel_event=self._cancel_event)
+            generator = RenpyProjectGenerator(str(data_dir), str(output_dir), options, cancel_event=self._cancel_event)
             generator.generate()
             if self._cancel_event.is_set():
                 self.after(0, self._on_build_error, "Conversione annullata dall'utente.")

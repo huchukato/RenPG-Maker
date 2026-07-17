@@ -14,8 +14,11 @@ class RenpyProjectGenerator:
         self.data_dir = data_dir
         self.output_dir = output_dir
         self.options = options or {}
-        self.template_dir = template_dir
         self.cancel_event = cancel_event
+        # Template base integrato nel package (o custom passato dal chiamante).
+        self.template_dir = template_dir or str(
+            Path(__file__).resolve().parent / "templates" / "DefaultTemplate" / "game"
+        )
         self.data = RpgmData(data_dir)
         self.transpiler = RenPyTranspiler(self.data, self.options)
         encryption_key = self.data.system.get("encryptionKey") if self.data.system.get("hasEncryptedImages") or self.data.system.get("hasEncryptedAudio") else None
@@ -195,33 +198,20 @@ init python:
         return "\n".join(out) + "\n"
 
     def _copy_template(self, game_dir):
-        """Copia screens.rpy, gui.rpy, gui/ e tl/ dal template Ren'Py."""
+        """Copia tutto il template base Ren'Py nella cartella game di output."""
         src = Path(self.template_dir) if self.template_dir else None
         if not src or not src.is_dir():
-            # Fallback al template GUI di default incluso nell'SDK.
-            src = Path(__file__).resolve().parent.parent / "renpy-sdk" / "gui" / "game"
-            rels = ("screens.rpy", "gui.rpy", "gui")
-        else:
-            rels = ("screens.rpy", "gui.rpy", "gui", "tl")
-        if not src.is_dir():
-            return
+            raise FileNotFoundError(f"Template base non trovato: {self.template_dir}")
         if (src / "game").is_dir():
             src = src / "game"
-        for rel in rels:
-            src_path = src / rel
-            dst_path = Path(game_dir) / rel
-            if not src_path.exists():
-                continue
-            if dst_path.exists():
-                if src_path.is_dir():
-                    shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(src_path, dst_path)
-            else:
-                if src_path.is_dir():
-                    shutil.copytree(src_path, dst_path)
-                else:
-                    shutil.copy2(src_path, dst_path)
+        shutil.copytree(
+            src,
+            Path(game_dir),
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(
+                "cache", "saves", "*.rpyc", "*.rpyb", "*.rpymc", ".DS_Store", ".gitignore"
+            ),
+        )
 
     def _copy_splash(self, game_dir):
         splash_src = Path(__file__).resolve().parent.parent / "img" / "splash.png"

@@ -19,3 +19,6 @@ rpgm2vn-gui = "rpgm2vn.gui:main"
 
 [tool.setuptools]
 packages = ["rpgm2vn"]
+
+[tool.setuptools.package-data]
+rpgm2vn = ["templates/**/*"]
