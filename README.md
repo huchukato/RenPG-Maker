@@ -86,3 +86,7 @@ build\build_windows.bat
 ```
 
 Creates `dist\RenPGMaker-windows\` containing the project, `.venv` and `start.bat` to launch the GUI.
+
+## 🙏 Credits
+
+This project is based on [rpgm2renpy](https://github.com/selectivepaperclip/rpgm2renpy) by **selectivepaperclip**, which provided the starting point for the RPG Maker MV/MZ → Ren'Py conversion logic.
