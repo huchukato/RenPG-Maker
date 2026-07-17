@@ -189,7 +189,7 @@ def build_project(
                 log_callback(line)
     returncode = process.wait()
 
-    # Estrae automaticamente l'.app macOS dallo zip e rimuove lo zip.
+    # Estrae automaticamente l'.app macOS dallo zip, mantenendo lo zip.
     if returncode == 0 and destination and target in ("mac", "all"):
         dest_path = Path(destination)
         for zip_path in dest_path.glob("*-mac.zip"):
@@ -199,7 +199,6 @@ def build_project(
                     cwd=str(dest_path),
                     check=True,
                 )
-                zip_path.unlink()
             except Exception:
                 # Se unzip non e disponibile o fallisce, lascia lo zip.
                 pass
