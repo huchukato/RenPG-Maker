@@ -51,12 +51,38 @@ Encrypted RPG Maker MV/MZ assets (`.rpgmvp`, `.rpgmvo`, `.rpgmvm`, `.rpgmve`) ar
 
 The GUI uses a color palette inspired by the project logo, with the logo displayed at the top-left and the RenPG icon in the window title. The generated Ren'Py game also shows a splash screen before the main menu, using `img/splash.png`, displayed once per session for 2.5 seconds.
 
-## 🍎 macOS .app bundle
+## 📦 Cross-platform bundles
 
-On macOS you can build a clickable `.app` bundle:
+In addition to the GUI's **Convert & Build** workflow, you can build standalone bundles for the platform of your choice:
+
+### Source release (`build.sh`)
 
 ```bash
-./build_mac_app.sh
+./build.sh
 ```
 
-This creates a self-contained `dist/RenPGMaker.app` with the proper icon, embedded virtual environment and project files. It runs natively on Apple Silicon (M1/M2/M3) as well as Intel Macs.
+Generates `dist/RenPGMaker-v0.1.0.zip` with the project source files, ready to be distributed or run manually.
+
+### macOS
+
+```bash
+./build/build_mac_app.sh
+```
+
+Creates a self-contained `dist/RenPGMaker.app` with the proper icon, embedded virtual environment and project files. It runs natively on Apple Silicon (M1/M2/M3) as well as Intel Macs.
+
+### Linux
+
+```bash
+./build/build_linux.sh
+```
+
+Creates `dist/RenPGMaker-linux/` containing the project, `.venv` and a `start.sh` script to launch the GUI.
+
+### Windows
+
+```bat
+build\build_windows.bat
+```
+
+Creates `dist\RenPGMaker-windows\` containing the project, `.venv` and `start.bat` to launch the GUI.
