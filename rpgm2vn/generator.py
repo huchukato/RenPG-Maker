@@ -10,10 +10,11 @@ from .assets import AssetManager
 class RenpyProjectGenerator:
     """Genera una cartella di progetto Ren'Py da un gioco RPG Maker."""
 
-    def __init__(self, data_dir, output_dir, options=None):
+    def __init__(self, data_dir, output_dir, options=None, template_dir=None):
         self.data_dir = data_dir
         self.output_dir = output_dir
         self.options = options or {}
+        self.template_dir = template_dir
         self.data = RpgmData(data_dir)
         self.transpiler = RenPyTranspiler(self.data, self.options)
         encryption_key = self.data.system.get("encryptionKey") if self.data.system.get("hasEncryptedImages") or self.data.system.get("hasEncryptedAudio") else None
@@ -27,6 +28,10 @@ class RenpyProjectGenerator:
         os.makedirs(self.output_dir, exist_ok=True)
         game_dir = os.path.join(self.output_dir, "game")
         os.makedirs(game_dir, exist_ok=True)
+
+        # Template GUI and screens (optional).
+        if self.template_dir:
+            self._copy_template(game_dir)
 
         # Splash screen.
         self._copy_splash(game_dir)
@@ -178,6 +183,29 @@ init python:
             out.append("")
 
         return "\n".join(out) + "\n"
+
+    def _copy_template(self, game_dir):
+        """Copia screens.rpy, gui.rpy, gui/ e tl/ dal template Ren'Py."""
+        if not self.template_dir:
+            return
+        src = Path(self.template_dir)
+        if (src / "game").is_dir():
+            src = src / "game"
+        for rel in ("screens.rpy", "gui.rpy", "gui", "tl"):
+            src_path = src / rel
+            dst_path = Path(game_dir) / rel
+            if not src_path.exists():
+                continue
+            if dst_path.exists():
+                if src_path.is_dir():
+                    shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src_path, dst_path)
+            else:
+                if src_path.is_dir():
+                    shutil.copytree(src_path, dst_path)
+                else:
+                    shutil.copy2(src_path, dst_path)
 
     def _copy_splash(self, game_dir):
         splash_src = Path(__file__).resolve().parent.parent / "img" / "splash.png"

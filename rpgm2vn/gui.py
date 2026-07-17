@@ -801,7 +801,9 @@ class RenPGMakerApp(ctk.CTk):
 
     def _run_convert_and_build(self, data_dir: Path, output_dir: Path, options: dict):
         try:
-            generator = RenpyProjectGenerator(str(data_dir), str(output_dir), options)
+            template_dir = output_dir.parent / "SinfoniaDelSerpente"
+            template_dir = str(template_dir) if template_dir.is_dir() else None
+            generator = RenpyProjectGenerator(str(data_dir), str(output_dir), options, template_dir=template_dir)
             generator.generate()
             self.after(0, self._append_log, self._t("conversion_done"))
 

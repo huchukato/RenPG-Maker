@@ -10,6 +10,7 @@ def main(argv=None):
     )
     parser.add_argument("input", help="Cartella www/data del gioco RPG Maker")
     parser.add_argument("output", help="Cartella di output per il progetto Ren'Py")
+    parser.add_argument("--template-dir", default=None, help="Progetto Ren'Py vuoto da cui copiare screens.rpy, gui.rpy e asset GUI")
     parser.add_argument("--start-map", type=int, default=None, help="ID mappa iniziale (ignora System.json)")
     parser.add_argument("--include-events", nargs="+", type=int, default=None, help="Solo determinati eventi (per test)")
     parser.add_argument("--no-dialogue-prefix", action="store_true", help="Non tentare di estrarre speaker dal prefisso nelle variabili")
@@ -26,7 +27,7 @@ def main(argv=None):
         "include_events": args.include_events,
     }
 
-    generator = RenpyProjectGenerator(data_dir, args.output, options)
+    generator = RenpyProjectGenerator(data_dir, args.output, options, template_dir=args.template_dir)
     generator.generate()
     print(f"Progetto Ren'Py generato in: {args.output}")
     return 0
