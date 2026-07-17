@@ -1,0 +1,2 @@
+# Nessuna dipendenza esterna richiesta per l'uso base.
+# Il tool richiede Python 3.8+.
