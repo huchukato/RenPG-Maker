@@ -96,6 +96,8 @@ class RenPyTranspiler:
             return []
         lines = [f"label common_event_{ce_id}:"]
         body, _ = self._process_block(commands, 0, -1, 1, f"ce{ce_id}")
+        if not body or body[-1].strip() != "return":
+            body.append("return")
         lines.extend(["    " + ln for ln in body])
         return lines
 
@@ -110,6 +112,8 @@ class RenPyTranspiler:
         body, _ = self._process_block(commands, 0, -1, 1, ctx)
         if not body:
             return []
+        if body[-1].strip() != "return":
+            body.append("return")
         return [f"label map{map_id:03d}_event{event_id:03d}:"] + ["    " + ln for ln in body]
 
     def _process_block(self, commands, i, parent_editor_indent, renpy_indent, ctx):
