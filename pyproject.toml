@@ -8,6 +8,14 @@ version = "0.1.0"
 description = "Convertitore RPG Maker MV/MZ -> Ren'Py VN-only"
 readme = "README.md"
 requires-python = ">=3.8"
+dependencies = [
+    "customtkinter>=5.2",
+    "pillow>=10.0",
+]
 
 [project.scripts]
 rpgm2vn = "rpgm2vn.cli:main"
+rpgm2vn-gui = "rpgm2vn.gui:main"
+
+[tool.setuptools]
+packages = ["rpgm2vn"]

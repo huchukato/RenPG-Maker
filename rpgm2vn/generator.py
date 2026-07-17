@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+from pathlib import Path
 from .parser import RpgmData
 from .transpiler import RenPyTranspiler
 from .assets import AssetManager
@@ -15,15 +16,21 @@ class RenpyProjectGenerator:
         self.options = options or {}
         self.data = RpgmData(data_dir)
         self.transpiler = RenPyTranspiler(self.data, self.options)
+        encryption_key = self.data.system.get("encryptionKey") if self.data.system.get("hasEncryptedImages") or self.data.system.get("hasEncryptedAudio") else None
         self.asset_manager = AssetManager(
             os.path.dirname(data_dir),  # assume data_dir is .../www/data
-            output_dir
+            output_dir,
+            encryption_key=encryption_key,
         )
 
     def generate(self):
         os.makedirs(self.output_dir, exist_ok=True)
         game_dir = os.path.join(self.output_dir, "game")
         os.makedirs(game_dir, exist_ok=True)
+
+        # Splash screen.
+        self._copy_splash(game_dir)
+        self._write_splash_rpy(game_dir)
 
         # Pre-transpile all scripts and collect characters used.
         script_blocks, character_ids = self._build_scripts()
@@ -87,11 +94,14 @@ class RenpyProjectGenerator:
         return ids
 
     def _options_rpy(self):
-        title = (self.data.game_title() or "RPGM VN").replace("\\", "\\\\").replace('"', '\\"')
+        raw_title = self.data.game_title() or "RPGM VN"
+        title = raw_title.replace("\\", "\\\\").replace('"', '\\"')
+        safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", raw_title).lower() or "rpgm_vn"
         return f'''# Opzioni generate da rpgm2vn
 init -1 python:
     config.name = "{title}"
     config.version = "1.0.0"
+
     gui.show_name = False
     config.has_voice = False
     config.has_music = True
@@ -100,6 +110,24 @@ init -1 python:
     config.exit_transition = dissolve
     config.intra_transition = dissolve
     config.window = "auto"
+
+init python:
+    build.name = "{safe_name}"
+    build.version = "1.0.0"
+    build.directory_name = "{safe_name}-1.0.0"
+    build.executable_name = "{safe_name}"
+
+    build.package("pc", "zip", "windows linux mac renpy all")
+    build.package("win", "zip", "windows renpy all")
+    build.package("mac", "app-zip", "mac renpy all")
+    build.package("linux", "tar.bz2", "linux renpy all")
+
+    def rpgm_play_movie(base):
+        for ext in (".mp4", ".webm", ".ogv", ".mkv"):
+            path = base + ext
+            if renpy.loadable(path):
+                renpy.movie_cutscene(path)
+                return
 '''
 
     def _script_rpy(self, character_ids, blocks):
@@ -147,6 +175,35 @@ init -1 python:
             out.append("")
 
         return "\n".join(out) + "\n"
+
+    def _copy_splash(self, game_dir):
+        splash_src = Path(__file__).resolve().parent.parent / "img" / "splash.png"
+        if splash_src.exists():
+            try:
+                shutil.copy2(str(splash_src), os.path.join(game_dir, "renpg_splash.png"))
+            except Exception:
+                pass
+
+    def _write_splash_rpy(self, game_dir):
+        splash_path = os.path.join(game_dir, "splash.rpy")
+        with open(splash_path, "w", encoding="utf-8") as f:
+            f.write('''image renpg_splash = "renpg_splash.png"
+
+label before_main_menu:
+    if renpy.session.get("_renpg_splash_shown"):
+        return
+    $ renpy.session["_renpg_splash_shown"] = True
+    scene black
+    with Pause(0.5)
+    show renpg_splash at truecenter
+    with dissolve
+    pause 2.5
+    hide renpg_splash
+    with dissolve
+    scene black
+    with Pause(0.3)
+    return
+''')
 
     def _escape_str(self, s):
         return _escape_str(s)

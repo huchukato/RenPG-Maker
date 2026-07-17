@@ -518,7 +518,7 @@ class RenPyTranspiler:
         if not params:
             return ""
         filename = params[0] if isinstance(params[0], str) else (params[0].get("name", "") if isinstance(params[0], dict) else "")
-        return f'$ renpy.movie_cutscene("video/{self._safe_filename(filename)}")'
+        return f'$ rpgm_play_movie("movies/{self._safe_filename(filename)}")'
 
     def _handle_name_input(self, params):
         actor_id = params[0] if params else 0

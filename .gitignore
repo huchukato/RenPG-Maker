@@ -4,11 +4,14 @@ __pycache__/
 *$py.class
 *.egg-info/
 .eggs/
-build/
+build/*
+!build/*.sh
+!build/*.bat
 dist/
 
 # Virtual environments
 venv/
+.venv/
 .env/
 
 # IDE
@@ -24,3 +27,17 @@ Thumbs.db
 # Generated Ren'Py projects (test output)
 /tmp/*_vn*/
 output/
+
+# uv lock file (local-only)
+uv.lock
+
+# Local release notes
+RELEASE.md
+
+# Ren'Py SDK downloaded by the tool
+renpy-sdk/
+.download/
+
+# Local backups
+*.bak*
+img/*.bak*
