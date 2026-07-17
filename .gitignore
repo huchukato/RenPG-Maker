@@ -33,6 +33,7 @@ uv.lock
 
 # Local release notes
 RELEASE.md
+F95.md
 
 # Ren'Py SDK downloaded by the tool
 renpy-sdk/
