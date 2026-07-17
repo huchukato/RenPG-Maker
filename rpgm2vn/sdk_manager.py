@@ -147,6 +147,7 @@ def build_project(
     target: str = "all",
     destination: str | Path | None = None,
     log_callback=None,
+    cancel_event=None,
 ) -> tuple[int, str]:
     """Lancia la build del progetto Ren'Py con il target richiesto.
 
@@ -178,6 +179,10 @@ def build_project(
     lines = []
     if process.stdout:
         for line in process.stdout:
+            if cancel_event and cancel_event.is_set():
+                process.terminate()
+                process.wait()
+                return 1, "\n".join(lines) + "\nBuild cancelled by user."
             line = line.rstrip()
             lines.append(line)
             if log_callback:

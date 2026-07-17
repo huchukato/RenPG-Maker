@@ -47,6 +47,7 @@ TEXTS = {
         "include_events_ph": "e.g. 1, 2, 3",
         "no_prefix": "No dialogue prefix",
         "convert": "▶  Convert & Build",
+        "cancel": "Cancel",
         "ready": "Ready",
         "converting": "Converting, please wait...",
         "conversion_done": "Conversion done.",
@@ -96,6 +97,7 @@ TEXTS = {
         "include_events_ph": "es. 1, 2, 3",
         "no_prefix": "Nessun prefisso dialogo",
         "convert": "▶ Converti e Builda",
+        "cancel": "Annulla",
         "ready": "Pronto",
         "converting": "Conversione in corso...",
         "conversion_done": "Conversione completata.",
@@ -145,6 +147,7 @@ TEXTS = {
         "include_events_ph": "ej. 1, 2, 3",
         "no_prefix": "Sin prefijo de diálogo",
         "convert": "▶ Convertir y compilar",
+        "cancel": "Cancelar",
         "ready": "Listo",
         "converting": "Convirtiendo, espera...",
         "conversion_done": "Conversión completada.",
@@ -641,6 +644,21 @@ class RenPGMakerApp(ctk.CTk):
         )
         self._text_refs["convert"].pack(side="left")
 
+        self._text_refs["cancel"] = ctk.CTkButton(
+            action_frame,
+            text="",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            width=100,
+            height=40,
+            fg_color=COLOR_ACCENT,
+            hover_color=COLOR_HOVER,
+            text_color="white",
+            corner_radius=10,
+            command=self._cancel,
+            state="disabled",
+        )
+        self._text_refs["cancel"].pack(side="left", padx=(8, 0))
+
         self.progress = ctk.CTkProgressBar(
             action_frame,
             mode="indeterminate",
@@ -770,6 +788,10 @@ class RenPGMakerApp(ctk.CTk):
         self._text_refs["sdk_download"].configure(state="normal")
         messagebox.showerror(self._t("error"), message)
 
+    def _cancel(self):
+        if hasattr(self, "_cancel_event"):
+            self._cancel_event.set()
+
     def _convert(self):
         game_raw = self.game_entry.get().strip()
         output_raw = self.output_entry.get().strip()
@@ -826,6 +848,8 @@ class RenPGMakerApp(ctk.CTk):
                 messagebox.showerror(self._t("error"), self._t("events_error"))
                 return
 
+        self._cancel_event = threading.Event()
+        self._text_refs["cancel"].configure(state="normal")
         self._text_refs["convert"].configure(state="disabled")
         self._text_refs["sdk_download"].configure(state="disabled")
         self._clear_log()
@@ -843,13 +867,18 @@ class RenPGMakerApp(ctk.CTk):
         try:
             template_dir = output_dir.parent / "SinfoniaDelSerpente"
             template_dir = str(template_dir) if template_dir.is_dir() else None
-            generator = RenpyProjectGenerator(str(data_dir), str(output_dir), options, template_dir=template_dir)
+            generator = RenpyProjectGenerator(str(data_dir), str(output_dir), options, template_dir=template_dir, cancel_event=self._cancel_event)
             generator.generate()
+            if self._cancel_event.is_set():
+                self.after(0, self._on_build_error, "Conversione annullata dall'utente.")
+                return
             self.after(0, self._append_log, self._t("conversion_done"))
 
             if not sdk_manager.is_sdk_present():
                 self.after(0, self._set_status, self._t("sdk_downloading"))
                 sdk_manager.download_sdk(progress_callback=self._download_progress)
+                if self._cancel_event.is_set():
+                    return
 
             self.after(0, self._set_status, self._t("building"))
             build_dir = output_dir / "dists"
@@ -858,6 +887,7 @@ class RenPGMakerApp(ctk.CTk):
                 target=self._build_target_var.get(),
                 destination=build_dir,
                 log_callback=self._build_log,
+                cancel_event=self._cancel_event,
             )
             if returncode == 0:
                 self.after(0, self._on_build_success, output_dir, build_dir)
@@ -886,6 +916,7 @@ class RenPGMakerApp(ctk.CTk):
         self._set_status(f"✅ {self._t('build_success').format(build_dir)}")
         self._text_refs["convert"].configure(state="normal")
         self._text_refs["sdk_download"].configure(state="normal")
+        self._text_refs["cancel"].configure(state="disabled")
         messagebox.showinfo(
             self._t("success_title"),
             self._t("build_success").format(build_dir),
@@ -897,6 +928,7 @@ class RenPGMakerApp(ctk.CTk):
         self._set_status(f"❌ {self._t('build_failed')}")
         self._text_refs["convert"].configure(state="normal")
         self._text_refs["sdk_download"].configure(state="normal")
+        self._text_refs["cancel"].configure(state="disabled")
         self._append_log(message)
         messagebox.showerror(self._t("error"), message)
 

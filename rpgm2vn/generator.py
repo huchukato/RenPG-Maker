@@ -10,11 +10,12 @@ from .assets import AssetManager
 class RenpyProjectGenerator:
     """Genera una cartella di progetto Ren'Py da un gioco RPG Maker."""
 
-    def __init__(self, data_dir, output_dir, options=None, template_dir=None):
+    def __init__(self, data_dir, output_dir, options=None, template_dir=None, cancel_event=None):
         self.data_dir = data_dir
         self.output_dir = output_dir
         self.options = options or {}
         self.template_dir = template_dir
+        self.cancel_event = cancel_event
         self.data = RpgmData(data_dir)
         self.transpiler = RenPyTranspiler(self.data, self.options)
         encryption_key = self.data.system.get("encryptionKey") if self.data.system.get("hasEncryptedImages") or self.data.system.get("hasEncryptedAudio") else None
@@ -22,9 +23,12 @@ class RenpyProjectGenerator:
             os.path.dirname(data_dir),  # assume data_dir is .../www/data
             output_dir,
             encryption_key=encryption_key,
+            cancel_event=self.cancel_event,
         )
 
     def generate(self):
+        if self.cancel_event and self.cancel_event.is_set():
+            return
         os.makedirs(self.output_dir, exist_ok=True)
         game_dir = os.path.join(self.output_dir, "game")
         os.makedirs(game_dir, exist_ok=True)
@@ -37,8 +41,14 @@ class RenpyProjectGenerator:
         self._copy_splash(game_dir)
         self._write_splash_rpy(game_dir)
 
+        if self.cancel_event and self.cancel_event.is_set():
+            return
+
         # Pre-transpile all scripts and collect characters used.
         script_blocks, character_ids = self._build_scripts()
+
+        if self.cancel_event and self.cancel_event.is_set():
+            return
 
         # Write base definitions.
         with open(os.path.join(game_dir, "options.rpy"), "w", encoding="utf-8") as f:

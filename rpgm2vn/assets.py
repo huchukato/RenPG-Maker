@@ -36,10 +36,11 @@ class AssetManager:
         "movies",
     ]
 
-    def __init__(self, project_root, output_dir, encryption_key=None):
+    def __init__(self, project_root, output_dir, encryption_key=None, cancel_event=None):
         self.project_root = project_root
         self.output_dir = output_dir
         self.encryption_key = encryption_key
+        self.cancel_event = cancel_event
         self.game_dir = os.path.join(output_dir, "game")
         self.images_dir = os.path.join(self.game_dir, "images")
         self.audio_dir = os.path.join(self.game_dir, "audio")
@@ -52,6 +53,8 @@ class AssetManager:
 
     def _copy_category(self, rel_dirs, dest_root):
         for rel in rel_dirs:
+            if self.cancel_event and self.cancel_event.is_set():
+                return
             src = os.path.join(self.project_root, rel)
             if not os.path.isdir(src):
                 continue
@@ -60,6 +63,8 @@ class AssetManager:
             os.makedirs(dest, exist_ok=True)
             for root, _, files in os.walk(src):
                 for fname in files:
+                    if self.cancel_event and self.cancel_event.is_set():
+                        return
                     src_path = os.path.join(root, fname)
                     ext = os.path.splitext(fname)[1].lower()
                     rel_path = os.path.relpath(src_path, src)
