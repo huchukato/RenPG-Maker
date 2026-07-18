@@ -70,22 +70,18 @@ class RenPyTranspiler:
         events = [e for e in map_data.get("events", []) if e]
         blocks = []
         sorted_events = sorted(events, key=lambda e: e.get("id", 0))
-        # Triggers that should run automatically when the map starts/loads
-        allowed_triggers = {0, 3, 4}
         event_blocks = []
+        extra_blocks = []
         for event in sorted_events:
             pages = event.get("pages", [])
             if not pages:
                 continue
-            page = pages[0]
-            trigger = page.get("trigger", 0)
-            if trigger not in allowed_triggers:
+            event_result = self._transpile_event(map_id, event)
+            if not event_result:
                 continue
-            event_key = f"map{map_id:03d}_event{event.get('id', 0):03d}"
-            event_lines = self._transpile_event(map_id, event)
-            if not event_lines:
-                continue
-            event_blocks.append((event_key, event_lines))
+            main_key, main_lines = event_result[0]
+            event_blocks.append((main_key, main_lines))
+            extra_blocks.extend(event_result[1:])
         # Deduplicate identical event bodies and build map calls
         body_to_key = {}
         call_keys = []
@@ -95,6 +91,8 @@ class RenPyTranspiler:
                 body_to_key[body_tuple] = event_key
                 blocks.append((event_key, event_lines))
             call_keys.append(body_to_key[body_tuple])
+        # Page labels are appended without deduplication (keys are unique)
+        blocks.extend(extra_blocks)
         # Remove consecutive duplicate calls to avoid repeated dialogue
         unique_calls = []
         for ck in call_keys:
@@ -130,16 +128,59 @@ class RenPyTranspiler:
         pages = event.get("pages", [])
         if not pages:
             return []
-        page = pages[0]
-        commands = page.get("list", [])
+        allowed_triggers = {0, 3, 4}
+        main_key = f"map{map_id:03d}_event{event_id:03d}"
         ctx = f"m{map_id}_e{event_id}"
-        body, _ = self._process_block(commands, 0, -1, 1, ctx)
-        if not body:
+        extra_blocks = []
+        branches = []
+        for pi, page in enumerate(pages):
+            if page.get("trigger", 0) not in allowed_triggers:
+                continue
+            commands = page.get("list", [])
+            if not commands:
+                continue
+            # Reset per-page picture state so show/hide do not leak across pages
+            self.current_pictures = {}
+            body, _ = self._process_block(commands, 0, -1, 1, ctx)
+            if not body:
+                continue
+            if body[-1].strip() != "return":
+                body.append("    return")
+            body.insert(0, "    $ renpy.pause(0, hard=False)")
+            page_key = f"{main_key}_p{pi:02d}"
+            extra_blocks.append((page_key, [f"label {page_key}:"] + ["    " + ln for ln in body]))
+            cond = self._build_page_condition(page, ctx)
+            branches.append((cond, page_key))
+        if not branches:
             return []
-        if body[-1].strip() != "return":
-            body.append("    return")
-        body.insert(0, "    $ renpy.pause(0, hard=False)")
-        return [f"label map{map_id:03d}_event{event_id:03d}:"] + ["    " + ln for ln in body]
+        dispatcher = [f"label {main_key}:"]
+        first = True
+        # Highest index page has priority, same as RPG Maker
+        for cond, page_key in reversed(branches):
+            prefix = "if" if first else "elif"
+            dispatcher.append(f"    {prefix} {cond}:")
+            dispatcher.append(f"        call {page_key}")
+            first = False
+        dispatcher.append("    return")
+        return [(main_key, dispatcher)] + extra_blocks
+
+    def _build_page_condition(self, page, ctx):
+        conditions = page.get("conditions", {}) if page else {}
+        parts = []
+        if conditions.get("switch1Valid") and conditions.get("switch1Id", 0) > 0:
+            parts.append(f"rpgm_switch_{conditions['switch1Id']}")
+        if conditions.get("switch2Valid") and conditions.get("switch2Id", 0) > 0:
+            parts.append(f"rpgm_switch_{conditions['switch2Id']}")
+        if conditions.get("selfSwitchValid"):
+            ch = conditions.get("selfSwitchCh", "A")
+            parts.append(f"{ctx}_ss_{ch}")
+        if conditions.get("variableValid"):
+            vid = conditions.get("variableId", 0)
+            val = conditions.get("variableValue", 0)
+            parts.append(f"rpgm_var_{vid} == {val}")
+        if not parts:
+            return "True"
+        return " and ".join(parts)
 
     def _process_block(self, commands, i, parent_editor_indent, renpy_indent, ctx):
         """Processa comandi finché indent <= parent_editor_indent."""
@@ -328,7 +369,7 @@ class RenPyTranspiler:
         while i < len(commands) and commands[i].get("code") == 401:
             lines.append(str(commands[i].get("parameters", [""])[0]))
             i += 1
-        text = "\\n".join(lines)
+        text = " ".join(lines)
         if not text:
             return [], i
         char = self._resolve_speaker(speaker, face_name)
@@ -719,6 +760,8 @@ class RenPyTranspiler:
         if text is None:
             return ""
         text = self._unescape(text)
+        # Remove manual line breaks so Ren'Py wraps dialogue automatically
+        text = re.sub(r"\s+", " ", text).strip()
         # Escape Ren'Py text tag characters before converting RPG Maker markup,
         # then convert markup to valid Ren'Py tags that must not be escaped.
         text = text.replace("{", "{{")
@@ -729,10 +772,6 @@ class RenPyTranspiler:
         # Escape Ren'Py interpolation and style characters
         text = text.replace("[", "[[")
         text = text.replace("%", "%%")
-        text = text.replace("\n", "\\n")
-        text = text.replace("\r", "")
-        # Ripristina le sequenze \n (raddoppiate sopra) affinché Ren'Py le interpreti come a capo.
-        text = text.replace("\\\\n", "\\n")
         return text
 
     def _convert_rpgm_markup(self, text):
