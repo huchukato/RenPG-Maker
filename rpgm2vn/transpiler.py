@@ -558,7 +558,7 @@ class RenPyTranspiler:
     def _handle_wait(self, params, fps=60):
         duration = params[0] if params else 60
         seconds = max(0.0, duration / fps)
-        return f"with Pause({seconds:.2f})"
+        return f"pause {seconds:.2f}"
 
     def _handle_show_picture(self, params):
         if not params:
