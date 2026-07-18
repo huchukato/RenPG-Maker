@@ -1,7 +1,9 @@
 
 # 🎮 RenPG Maker
 
-![RenPG Maker Logo](img/logo_512.png)
+<p align="center">
+  <img src="img/logo_512.png" alt="RenPG Maker Logo">
+</p>
 
 ![Python](https://img.shields.io/badge/python-3.8+-06b6d4.svg)
 ![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-7c3aed.svg)
