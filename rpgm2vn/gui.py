@@ -16,16 +16,16 @@ from . import sdk_manager
 
 
 # Palette estratta dal logo
-COLOR_DARK = "#02070d"
-COLOR_PRIMARY = "#0f2a50"
-COLOR_SECONDARY = "#15325a"
-COLOR_ACCENT = "#444b68"
-COLOR_TEXT = "#bbbec7"
-COLOR_HIGHLIGHT = "#3b6eab"
-COLOR_HOVER = "#5c8acb"
-COLOR_ORANGE = "#eb6032"
-COLOR_ORANGE_HOVER = "#c44d26"
-COLOR_TEAL = "#146496"
+COLOR_DARK = "#1a1210"
+COLOR_PRIMARY = "#3c3030"
+COLOR_SECONDARY = "#2c2020"
+COLOR_ACCENT = "#5c483c"
+COLOR_TEXT = "#e8ddd2"
+COLOR_HIGHLIGHT = "#fc9c00"
+COLOR_HOVER = "#e88a2a"
+COLOR_ORANGE = "#fc9c00"
+COLOR_ORANGE_HOVER = "#e88a2a"
+COLOR_TEAL = "#8d7356"
 
 LOGO_PATH = Path(__file__).resolve().parent.parent / "img" / "logo_256.png"
 ICON_PATH = Path(__file__).resolve().parent.parent / "img" / "icon.iconset" / "icon_256x256.png"

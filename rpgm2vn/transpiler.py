@@ -53,6 +53,7 @@ class RenPyTranspiler:
         self.options = options or {}
         self.convert_dialogue_prefix = self.options.get("convert_dialogue_prefix", True)
         self.default_character = self.options.get("default_character", "narrator")
+        self.current_pictures = {}
 
     def _indent(self, level):
         return "    " * level
@@ -69,20 +70,42 @@ class RenPyTranspiler:
         events = [e for e in map_data.get("events", []) if e]
         blocks = []
         sorted_events = sorted(events, key=lambda e: e.get("id", 0))
-        # Pre-transpile events to know which have content
+        # Triggers that should run automatically when the map starts/loads
+        allowed_triggers = {0, 3, 4}
         event_blocks = []
         for event in sorted_events:
+            pages = event.get("pages", [])
+            if not pages:
+                continue
+            page = pages[0]
+            trigger = page.get("trigger", 0)
+            if trigger not in allowed_triggers:
+                continue
             event_key = f"map{map_id:03d}_event{event.get('id', 0):03d}"
             event_lines = self._transpile_event(map_id, event)
-            if event_lines:
-                event_blocks.append((event_key, event_lines))
-        if event_blocks:
+            if not event_lines:
+                continue
+            event_blocks.append((event_key, event_lines))
+        # Deduplicate identical event bodies and build map calls
+        body_to_key = {}
+        call_keys = []
+        for event_key, event_lines in event_blocks:
+            body_tuple = tuple(event_lines)
+            if body_tuple not in body_to_key:
+                body_to_key[body_tuple] = event_key
+                blocks.append((event_key, event_lines))
+            call_keys.append(body_to_key[body_tuple])
+        # Remove consecutive duplicate calls to avoid repeated dialogue
+        unique_calls = []
+        for ck in call_keys:
+            if not unique_calls or unique_calls[-1] != ck:
+                unique_calls.append(ck)
+        if unique_calls:
             map_label = [f"label map{map_id:03d}:", "    $ renpy.pause(0, hard=False)"]
-            for event_key, _ in event_blocks:
-                map_label.append(f"    call {event_key}")
+            for ck in unique_calls:
+                map_label.append(f"    call {ck}")
             map_label.append("    return")
-            blocks.append((f"map{map_id:03d}", map_label))
-            blocks.extend(event_blocks)
+            blocks.insert(0, (f"map{map_id:03d}", map_label))
         else:
             blocks.append((f"map{map_id:03d}", [f"label map{map_id:03d}:", "    $ renpy.pause(0, hard=False)", "    return"]))
         return blocks
@@ -168,24 +191,24 @@ class RenPyTranspiler:
                 i += 1
             else:
                 line, _ = self._process_command(cmd, ctx)
-                if line == "with fade":
-                    pending_transition = "with fade"
+                if not line:
+                    pending_transition = None
+                elif line in ("with fade", "with dissolve"):
+                    pending_transition = line
                 elif pending_transition:
-                    if not line:
-                        pending_transition = None
-                    else:
-                        first = line.split("\n")[0].strip()
-                        if first.startswith(("show ", "hide ")):
-                            _emit(line)
-                            _emit(pending_transition)
-                        else:
-                            _emit(line)
-                        pending_transition = None
-                else:
-                    if line:
+                    first = line.split("\n")[0].strip()
+                    if first.startswith("show "):
                         _emit(line)
-                        if line == "return":
-                            terminated = True
+                        _emit(pending_transition)
+                    else:
+                        _emit(line)
+                    pending_transition = None
+                    if line == "return":
+                        terminated = True
+                else:
+                    _emit(line)
+                    if line == "return":
+                        terminated = True
                 i += 1
         return out, i
 
@@ -530,7 +553,7 @@ class RenPyTranspiler:
         map_id = params[1]
         if map_id == 0 or map_id not in self.data.map_cache:
             return ["return"]
-        return [f"call map{map_id:03d}"]
+        return [f"jump map{map_id:03d}"]
 
     def _handle_wait(self, params, fps=60):
         duration = params[0] if params else 60
@@ -543,11 +566,15 @@ class RenPyTranspiler:
         pic_id = params[0]
         pic_name = params[1] if len(params) > 1 else ""
         tag = self._safe_identifier(pic_name) or f"pic_{pic_id}"
+        self.current_pictures[pic_id] = tag
         return f"show {tag}"
 
     def _handle_erase_picture(self, params):
         pic_id = params[0] if params else 1
-        return f"hide pic_{pic_id}"
+        if pic_id in self.current_pictures:
+            tag = self.current_pictures.pop(pic_id)
+            return f"hide {tag}"
+        return ""
 
     def _handle_play_bgm(self, params):
         bgm = params[0] if params else {}
@@ -692,16 +719,29 @@ class RenPyTranspiler:
         if text is None:
             return ""
         text = self._unescape(text)
+        # Escape Ren'Py text tag characters before converting RPG Maker markup,
+        # then convert markup to valid Ren'Py tags that must not be escaped.
+        text = text.replace("{", "{{")
+        text = text.replace("}", "}}")
+        text = self._convert_rpgm_markup(text)
         text = text.replace("\\", "\\\\")
         text = text.replace('"', '\\"')
-        # Escape Ren'Py interpolation and text tag characters
+        # Escape Ren'Py interpolation and style characters
         text = text.replace("[", "[[")
-        text = text.replace("{", "{{")
         text = text.replace("%", "%%")
         text = text.replace("\n", "\\n")
         text = text.replace("\r", "")
         # Ripristina le sequenze \n (raddoppiate sopra) affinché Ren'Py le interpreti come a capo.
         text = text.replace("\\\\n", "\\n")
+        return text
+
+    def _convert_rpgm_markup(self, text):
+        if not text:
+            return text
+        # Font size \fs[N]... -> {size=N}...{/size} (only until next line or markup)
+        text = re.sub(r"\\fs\[(\d+)\]([^\n\\\\]*)", r"{size=\1}\2{/size}", text, flags=re.IGNORECASE)
+        # Color \c[N]: remove for now, palette mapping could be added later
+        text = re.sub(r"\\c\[\d+\]", "", text, flags=re.IGNORECASE)
         return text
 
     def _unescape(self, text):
