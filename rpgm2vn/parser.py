@@ -118,6 +118,30 @@ class RpgmData:
     def start_position(self):
         return self.system.get("startX", 0), self.system.get("startY", 0)
 
+    def title1_name(self):
+        return self.system.get("title1Name", "") or ""
+
+    def title2_name(self):
+        return self.system.get("title2Name", "") or ""
+
+    def title_bgm_name(self):
+        bgm = self.system.get("titleBgm")
+        if not bgm or not isinstance(bgm, dict):
+            return ""
+        return bgm.get("name", "") or ""
+
+    def window_size(self):
+        package_path = os.path.join(os.path.dirname(self.data_dir), "package.json")
+        if not os.path.isfile(package_path):
+            return (1920, 1080)
+        try:
+            with open(package_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            window = data.get("window", {})
+            return (window.get("width", 1920), window.get("height", 1080))
+        except Exception:
+            return (1920, 1080)
+
     @staticmethod
     def safe_identifier(name):
         name = re.sub(r"[^0-9A-Za-z_]+", "_", name or "")

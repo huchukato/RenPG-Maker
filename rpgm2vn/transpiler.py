@@ -122,6 +122,12 @@ class RenPyTranspiler:
         """Processa comandi finché indent <= parent_editor_indent."""
         out = []
         terminated = False
+        pending_transition = None
+
+        def _emit(s):
+            for sub_line in s.split("\n"):
+                out.append(self._indent(renpy_indent) + sub_line)
+
         while i < len(commands):
             cmd = commands[i]
             ci = cmd.get("indent", 0)
@@ -133,33 +139,53 @@ class RenPyTranspiler:
                 continue
             if cc == 101:
                 text, i = self._collect_text(commands, i, renpy_indent, ctx)
+                pending_transition = None
                 out.extend(text)
             elif cc == 111:
+                pending_transition = None
                 block, i = self._handle_if(commands, i, ci, renpy_indent, ctx)
                 out.extend(block)
             elif cc == 112:
+                pending_transition = None
                 block, i = self._handle_loop(commands, i, ci, renpy_indent, ctx)
                 out.extend(block)
             elif cc == 102:
+                pending_transition = None
                 block, i = self._handle_choice(commands, i, ci, renpy_indent, ctx)
                 out.extend(block)
             elif cc == 113:
+                pending_transition = None
                 out.append(self._indent(renpy_indent) + "# break")
                 i += 1
             elif cc == 115:
+                pending_transition = None
                 out.append(self._indent(renpy_indent) + "return")
                 i += 1
                 terminated = True
             elif cc in (0, 108, 408, 505, 657, 601, 602, 603, 604, 412, 413, 404, 411, 402, 403, 401):
                 # terminators/options handled by their parents
+                pending_transition = None
                 i += 1
             else:
                 line, _ = self._process_command(cmd, ctx)
-                if line:
-                    for sub_line in line.split("\n"):
-                        out.append(self._indent(renpy_indent) + sub_line)
-                    if line == "return":
-                        terminated = True
+                if line == "with fade":
+                    pending_transition = "with fade"
+                elif pending_transition:
+                    if not line:
+                        pending_transition = None
+                    else:
+                        first = line.split("\n")[0].strip()
+                        if first.startswith(("show ", "hide ")):
+                            _emit(line)
+                            _emit(pending_transition)
+                        else:
+                            _emit(line)
+                        pending_transition = None
+                else:
+                    if line:
+                        _emit(line)
+                        if line == "return":
+                            terminated = True
                 i += 1
         return out, i
 
@@ -201,11 +227,41 @@ class RenPyTranspiler:
             i += 1
         return body, i
 
+    def _is_continue_choice(self, text):
+        if not text:
+            return False
+        t = str(text).strip().lower().rstrip("?.!")
+        return t == "continue"
+
     def _handle_choice(self, commands, i, editor_indent, renpy_indent, ctx):
         cmd = commands[i]
         params = cmd.get("parameters", [])
         choices = params[0] if len(params) > 0 else []
         cancel_type = params[2] if len(params) > 2 else 0
+
+        # Scelta singola "Continue?" -> appiattisce il corpo senza menu
+        if len(choices) == 1:
+            raw_text = choices[0]
+            display = self._format_text(raw_text) if raw_text else ""
+            if self._is_continue_choice(display):
+                i += 1
+                while i < len(commands):
+                    c = commands[i]
+                    ci = c.get("indent", 0)
+                    cc = c.get("code", 0)
+                    if ci < editor_indent:
+                        break
+                    if cc == 402:
+                        i += 1
+                        body, i = self._process_block(commands, i, editor_indent, renpy_indent, ctx)
+                        return (body, i) if body else ([], i)
+                    elif cc == 404:
+                        i += 1
+                        break
+                    else:
+                        i += 1
+                return [], i
+
         out = [self._indent(renpy_indent) + "menu:"]
         i += 1
         option_level = renpy_indent + 1

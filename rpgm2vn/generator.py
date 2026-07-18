@@ -15,11 +15,19 @@ class RenpyProjectGenerator:
         self.output_dir = output_dir
         self.options = options or {}
         self.cancel_event = cancel_event
-        # Template base integrato nel package (o custom passato dal chiamante).
-        self.template_dir = template_dir or str(
-            Path(__file__).resolve().parent / "templates" / "DefaultTemplate" / "game"
-        )
+
         self.data = RpgmData(data_dir)
+
+        # Template base integrato nel package (o custom passato dal chiamante).
+        if template_dir:
+            self.template_dir = template_dir
+        else:
+            _, height = self.data.window_size()
+            template_name = "720" if height == 720 else "1080"
+            self.template_dir = str(
+                Path(__file__).resolve().parent / "templates" / template_name / "game"
+            )
+
         self.transpiler = RenPyTranspiler(self.data, self.options)
         encryption_key = self.data.system.get("encryptionKey") if self.data.system.get("hasEncryptedImages") or self.data.system.get("hasEncryptedAudio") else None
         self.asset_manager = AssetManager(
@@ -62,6 +70,12 @@ class RenpyProjectGenerator:
 
         # Copy assets.
         self.asset_manager.copy_assets()
+
+        # Image definitions.
+        self._write_images_rpy(game_dir)
+
+        # Menu backgrounds.
+        self._copy_menu_backgrounds(game_dir)
 
     def _build_scripts(self):
         blocks = {}
@@ -115,6 +129,12 @@ class RenpyProjectGenerator:
         raw_title = self.data.game_title() or "RPGM VN"
         title = raw_title.replace("\\", "\\\\").replace('"', '\\"')
         safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", raw_title).lower() or "rpgm_vn"
+        width, height = self.data.window_size()
+        bgm_name = self.data.title_bgm_name()
+        main_menu_music_line = ""
+        if bgm_name:
+            safe_bgm = self.asset_manager._safe_filename(bgm_name + ".ogg")
+            main_menu_music_line = f'    config.main_menu_music = "audio/bgm/{safe_bgm}"\n'
         return f'''# Opzioni generate da rpgm2vn
 init -1 python:
     config.name = "{title}"
@@ -128,8 +148,8 @@ init -1 python:
     config.exit_transition = dissolve
     config.intra_transition = dissolve
     config.window = "auto"
-    config.screen_width = 1920
-    config.screen_height = 1080
+{main_menu_music_line}    config.screen_width = {width}
+    config.screen_height = {height}
     config.default_fullscreen = False
 
 init python:
@@ -253,6 +273,61 @@ label before_main_menu:
     with dissolve
     return
 ''')
+
+    def _write_images_rpy(self, game_dir):
+        images_dir = os.path.join(game_dir, "images")
+        if not os.path.isdir(images_dir):
+            return
+        out_lines = ["# Auto-generated image definitions\n\n"]
+        seen = set()
+        for root, dirs, files in os.walk(images_dir):
+            dirs.sort()
+            for fname in sorted(files):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"):
+                    continue
+                full = os.path.join(root, fname)
+                rel = os.path.relpath(full, game_dir).replace("\\", "/")
+                tag = os.path.splitext(fname)[0]
+                if tag in seen:
+                    continue
+                seen.add(tag)
+                out_lines.append(f'image {tag} = "{rel}"\n')
+        out_path = os.path.join(game_dir, "images.rpy")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.writelines(out_lines)
+
+    def _copy_menu_backgrounds(self, game_dir):
+        title1 = self.data.title1_name()
+        title2 = self.data.title2_name()
+        if not title1:
+            return
+        images_dir = os.path.join(game_dir, "images")
+        gui_dir = os.path.join(game_dir, "gui")
+        if not os.path.isdir(images_dir):
+            return
+        os.makedirs(gui_dir, exist_ok=True)
+
+        def find_image(safe_stem):
+            for fname in os.listdir(images_dir):
+                base, ext = os.path.splitext(fname)
+                if base == safe_stem and ext.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
+                    return fname
+            return None
+
+        safe1 = os.path.splitext(self.asset_manager._safe_picture_name(f"{title1}.png"))[0]
+        match1 = find_image(safe1)
+        if not match1:
+            return
+        src1 = os.path.join(images_dir, match1)
+        shutil.copy2(src1, os.path.join(gui_dir, "main_menu.png"))
+        if title2:
+            safe2 = os.path.splitext(self.asset_manager._safe_picture_name(f"{title2}.png"))[0]
+            match2 = find_image(safe2)
+            if match2:
+                shutil.copy2(os.path.join(images_dir, match2), os.path.join(gui_dir, "game_menu.png"))
+                return
+        shutil.copy2(src1, os.path.join(gui_dir, "game_menu.png"))
 
     def _escape_str(self, s):
         return _escape_str(s)

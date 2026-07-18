@@ -49,6 +49,14 @@ Gli asset criptati di RPG Maker MV/MZ (`.rpgmvp`, `.rpgmvo`, `.rpgmvm`, `.rpgmve
 
 La GUI usa una palette ispirata al logo del progetto, con il logo ingrandito in alto a sinistra e l'icona RenPG nella finestra. Anche il gioco Ren'Py generato mostra uno splash screen prima del menu principale, usando `img/splash.png`, visualizzato una sola volta per sessione per 2,5 secondi.
 
+## ✨ Novità della 0.2.0
+
+- **Template sensibili alla risoluzione**: seleziona automaticamente il template Ren'Py a 720p o 1080p in base alla risoluzione del progetto RPG Maker.
+- **Integrazione menu RPG Maker**: copia `title1Name`/`title2Name` da `System.json` in `gui/main_menu.png` e `gui/game_menu.png`, e imposta `config.main_menu_music` da `titleBgm`.
+- **Script generati più puliti**: il transpiler non emette più `with fade` ridondanti; i menu a opzione singola "Continue?" vengono appiattiti.
+- **Percorsi audio corretti**: i riferimenti a effetti sonori e musica ora rispettano il layout dei canali audio di Ren'Py.
+- **Icona finestra**: il logo RenPG viene usato come icona della finestra del gioco generato.
+
 ## 📦 Build per tutte le piattaforme
 
 Oltre al workflow **Converti e Builda** della GUI, puoi creare bundle standalone per la piattaforma che preferisci:
