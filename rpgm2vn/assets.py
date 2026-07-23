@@ -12,6 +12,10 @@ class AssetManager:
         ".rpgmvo": ".ogg",
         ".rpgmvm": ".mp4",
         ".rpgmve": ".wav",
+        ".png_": ".png",
+        ".ogg_": ".ogg",
+        ".m4a_": ".m4a",
+        ".mp4_": ".mp4",
     }
 
     IMAGE_DIRS = [
@@ -25,6 +29,7 @@ class AssetManager:
         "img/battlebacks2",
         "img/titles1",
         "img/titles2",
+        "img/layers",
     ]
     AUDIO_DIRS = [
         "audio/bgm",
@@ -129,15 +134,22 @@ class AssetManager:
 
     def _safe_filename(self, name):
         parts = name.replace("\\", "/").split("/")
-        safe = [re.sub(r"[^0-9A-Za-z_.-]", "_", p).strip("_.") for p in parts]
-        safe = [p for p in safe if p]
-        return "/".join(safe) if safe else "asset"
+        safe_parts = []
+        for p in parts:
+            base, ext = os.path.splitext(p)
+            base = re.sub(r"[^0-9A-Za-z_.-]", "_", base)
+            base = re.sub(r"_+", "_", base).strip("_")
+            ext = ext.strip("_")
+            if not base:
+                continue
+            safe_parts.append((base + ext).lower())
+        return "/".join(safe_parts) if safe_parts else "asset"
 
     def _safe_picture_name(self, rel_path):
         """Appiattisce e sanifica il nome di un'immagine Show Picture,
         usando le stesse regole di _safe_identifier di transplier.py."""
         base, ext = os.path.splitext(rel_path.replace("\\", "/"))
-        safe = re.sub(r"[^0-9A-Za-z_]+", "_", base)
+        safe = re.sub(r"[^0-9A-Za-z_]+", "_", base).lower()
         safe = re.sub(r"_+", "_", safe).strip("_")
         if not safe:
             safe = "asset"

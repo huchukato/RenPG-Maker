@@ -1,5 +1,6 @@
 import re
 from .parser import RpgmData
+from .plugins import PluginDispatcher
 
 
 class RenPyTranspiler:
@@ -54,6 +55,15 @@ class RenPyTranspiler:
         self.convert_dialogue_prefix = self.options.get("convert_dialogue_prefix", True)
         self.default_character = self.options.get("default_character", "narrator")
         self.current_pictures = {}
+        self.character_faces: dict[str, str] = {}
+        self._plugins = PluginDispatcher(self, self.options.get("extra_plugins", []))
+        # Mapping nomi attore -> id per riconoscere prefissi di dialogo validi.
+        self._actor_name_to_id = {}
+        if self.data:
+            for actor_id in range(1, len(self.data.actors) + 1):
+                name = (self.data.actor_name(actor_id) or "").strip()
+                if name and not name.lower().startswith("actor"):
+                    self._actor_name_to_id[name.lower()] = actor_id
 
     def _indent(self, level):
         return "    " * level
@@ -63,16 +73,88 @@ class RenPyTranspiler:
             return [self._indent(indent_level) + "pass"]
         return body
 
+    def _is_optional_event(self, event):
+        name = (event.get("name") or "").lower()
+        if "hidden scene" in name:
+            return True
+        pages = event.get("pages", [])
+        if not pages:
+            return False
+        cmds = pages[0].get("list", [])
+        for idx, cmd in enumerate(cmds):
+            if cmd.get("code") != 102:
+                continue
+            params = cmd.get("parameters", [])
+            choices = params[0] if len(params) > 0 else []
+            if len(choices) != 2:
+                continue
+            # Deve esserci una scelta "skip" e una alternativa "no"/"play"
+            skip_positions = [
+                i for i, c in enumerate(choices)
+                if "skip" in str(c).lower()
+            ]
+            other_positions = [
+                i for i, c in enumerate(choices)
+                if str(c).lower().startswith("no")
+                or "play" in str(c).lower()
+            ]
+            if len(skip_positions) != 1 or not other_positions:
+                continue
+            skip_idx = skip_positions[0]
+            editor_indent = cmd.get("indent", 0)
+            # Trova gli indici di inizio dei due rami
+            branches = {}
+            j = idx + 1
+            while j < len(cmds):
+                c = cmds[j]
+                ci = c.get("indent", 0)
+                cc = c.get("code", 0)
+                if ci < editor_indent:
+                    break
+                if ci == editor_indent:
+                    if cc == 404:
+                        break
+                    if cc == 402:
+                        bidx = c.get("parameters", [0, ""])[0]
+                        branches[bidx] = j
+                    elif cc == 403:
+                        branches[-1] = j
+                j += 1
+            skip_start = branches.get(skip_idx)
+            other_start = branches.get(other_positions[0])
+            if skip_start is None:
+                continue
+            # Il ramo skip deve contenere un Transfer Player (201)
+            if not self._branch_has_code(cmds, skip_start + 1, editor_indent, 201):
+                continue
+            # L'altro ramo non deve contenere un trasferimento
+            if other_start is not None and self._branch_has_code(cmds, other_start + 1, editor_indent, 201):
+                continue
+            return True
+        return False
+
+    def _event_trigger_group(self, event):
+        pages = event.get("pages", [])
+        trigger = pages[0].get("trigger", 0) if pages else 0
+        # Ordine: autorun/parallel -> azione -> event touch -> player touch (trasferimenti)
+        order = {3: 0, 4: 0, 0: 1, 2: 2, 1: 3}
+        return order.get(trigger, 1)
+
     def transpile_map(self, map_id):
         map_data = self.data.get_map(map_id)
         if not map_data:
             return []
         events = [e for e in map_data.get("events", []) if e]
         blocks = []
-        sorted_events = sorted(events, key=lambda e: e.get("id", 0))
+        sorted_events = sorted(
+            events,
+            key=lambda e: (self._event_trigger_group(e), e.get("id", 0))
+        )
         event_blocks = []
         extra_blocks = []
         for event in sorted_events:
+            if self._is_optional_event(event):
+                continue
             pages = event.get("pages", [])
             if not pages:
                 continue
@@ -128,7 +210,7 @@ class RenPyTranspiler:
         pages = event.get("pages", [])
         if not pages:
             return []
-        allowed_triggers = {0, 3, 4}
+        allowed_triggers = {0, 1, 2, 3, 4}
         main_key = f"map{map_id:03d}_event{event_id:03d}"
         ctx = f"m{map_id}_e{event_id}"
         extra_blocks = []
@@ -177,7 +259,7 @@ class RenPyTranspiler:
         if conditions.get("variableValid"):
             vid = conditions.get("variableId", 0)
             val = conditions.get("variableValue", 0)
-            parts.append(f"rpgm_var_{vid} == {val}")
+            parts.append(f"{self._rpgm_var_ref(vid)} == {val}")
         if not parts:
             return "True"
         return " and ".join(parts)
@@ -215,8 +297,20 @@ class RenPyTranspiler:
                 out.extend(block)
             elif cc == 102:
                 pending_transition = None
-                block, i = self._handle_choice(commands, i, ci, renpy_indent, ctx)
-                out.extend(block)
+                params = cmd.get("parameters", [])
+                choices = params[0] if len(params) > 0 else []
+                if len(choices) == 1 and self._is_continue_choice(choices[0]):
+                    # Sostituisci l'eventuale pausa temporizzata subito prima con una pausa interattiva
+                    pause_line = self._indent(renpy_indent) + "pause"
+                    if out and re.match(rf"^{re.escape(self._indent(renpy_indent))}pause \d+\.\d+$", out[-1]):
+                        out[-1] = pause_line
+                    else:
+                        out.append(pause_line)
+                    body, i = self._handle_continue_body(commands, i, ci, renpy_indent, ctx)
+                    out.extend(body)
+                else:
+                    block, i = self._handle_choice(commands, i, ci, renpy_indent, ctx)
+                    out.extend(block)
             elif cc == 113:
                 pending_transition = None
                 out.append(self._indent(renpy_indent) + "# break")
@@ -297,34 +391,75 @@ class RenPyTranspiler:
         t = str(text).strip().lower().rstrip("?.!")
         return t == "continue"
 
+    def _handle_continue_body(self, commands, i, editor_indent, renpy_indent, ctx):
+        """Processa il corpo di una scelta singola 'Continue?' senza generare il menu."""
+        i += 1
+        while i < len(commands):
+            c = commands[i]
+            ci = c.get("indent", 0)
+            cc = c.get("code", 0)
+            if ci < editor_indent:
+                break
+            if cc == 402:
+                i += 1
+                body, i = self._process_block(commands, i, editor_indent, renpy_indent, ctx)
+                return body, i
+            elif cc == 404:
+                i += 1
+                break
+            else:
+                i += 1
+        return [], i
+
+    def _branch_has_code(self, commands, start_idx, editor_indent, target_code):
+        j = start_idx
+        while j < len(commands):
+            c = commands[j]
+            ci = c.get("indent", 0)
+            cc = c.get("code", 0)
+            if ci <= editor_indent and cc in (402, 403, 404):
+                break
+            if cc == target_code:
+                return True
+            j += 1
+        return False
+
     def _handle_choice(self, commands, i, editor_indent, renpy_indent, ctx):
         cmd = commands[i]
         params = cmd.get("parameters", [])
         choices = params[0] if len(params) > 0 else []
         cancel_type = params[2] if len(params) > 2 else 0
 
-        # Scelta singola "Continue?" -> appiattisce il corpo senza menu
-        if len(choices) == 1:
-            raw_text = choices[0]
-            display = self._format_text(raw_text) if raw_text else ""
-            if self._is_continue_choice(display):
-                i += 1
-                while i < len(commands):
-                    c = commands[i]
-                    ci = c.get("indent", 0)
-                    cc = c.get("code", 0)
-                    if ci < editor_indent:
-                        break
-                    if cc == 402:
-                        i += 1
-                        body, i = self._process_block(commands, i, editor_indent, renpy_indent, ctx)
-                        return (body, i) if body else ([], i)
-                    elif cc == 404:
-                        i += 1
-                        break
-                    else:
-                        i += 1
-                return [], i
+        # Se una sola opzione di primo livello contiene un Transfer Player,
+        # la eseguiamo direttamente senza mostrare il menu.
+        option_starts = []
+        j = i + 1
+        while j < len(commands):
+            c = commands[j]
+            ci = c.get("indent", 0)
+            cc = c.get("code", 0)
+            if ci < editor_indent:
+                break
+            if cc == 404 and ci == editor_indent:
+                break
+            if cc in (402, 403) and ci == editor_indent:
+                option_starts.append(j)
+            j += 1
+
+        transfer_branch = None
+        non_transfer_branches = []
+        for start in option_starts:
+            body_start = start + 1
+            has_transfer = self._branch_has_code(commands, body_start, editor_indent, 201)
+            if has_transfer:
+                transfer_branch = start
+            else:
+                non_transfer_branches.append(start)
+        if len(option_starts) >= 2 and transfer_branch is not None and non_transfer_branches:
+            # Auto-esegui solo il ramo di trasferimento
+            i = transfer_branch + 1
+            body, i = self._process_block(commands, i, editor_indent, renpy_indent, ctx)
+            return body, i
 
         out = [self._indent(renpy_indent) + "menu:"]
         i += 1
@@ -373,6 +508,9 @@ class RenPyTranspiler:
         if not text:
             return [], i
         char = self._resolve_speaker(speaker, face_name)
+        if face_name and char != self.default_character:
+            safe_face = self._safe_filename(face_name).replace(".png", "").replace(".", "")
+            self.character_faces[char] = safe_face
         return [self._indent(renpy_indent) + f'{char} "{self._format_text(text)}"'], i
 
     def _resolve_speaker(self, speaker, face_name):
@@ -490,11 +628,11 @@ class RenPyTranspiler:
             val = params[2] == 0 if len(params) > 2 else True
             return f"rpgm_switch_{sw}" if val else f"not rpgm_switch_{sw}"
         if op == 1:
-            v1 = params[1]
-            comp = params[2] if len(params) > 2 else 0
-            op_type = params[3] if len(params) > 3 else 0
-            value = params[4] if len(params) > 4 else 0
-            left = f"rpgm_var_{v1}"
+            v1 = params[1] if len(params) > 1 else 0
+            op_type = params[2] if len(params) > 2 else 0
+            value = params[3] if len(params) > 3 else 0
+            comp = params[4] if len(params) > 4 else 0
+            left = self._rpgm_var_ref(v1)
             right = self._var_operand(op_type, value)
             ops = {0: "==", 1: ">=", 2: "<=", 3: ">", 4: "<", 5: "!="}
             return f"{left} {ops.get(comp, '==')} {right}"
@@ -514,7 +652,7 @@ class RenPyTranspiler:
                 return self._quote_str(val)
             return str(val)
         if val_type == 1:
-            return f"rpgm_var_{val}"
+            return self._rpgm_var_ref(val)
         if val_type == 2:
             return "0"
         if val_type == 3:
@@ -529,6 +667,8 @@ class RenPyTranspiler:
         start, end, value = (params + [0, 0, 0])[:3]
         lines = []
         for sw in range(start, end + 1):
+            if sw == 0:
+                continue
             py_val = "True" if value == 0 else "False"
             lines.append(f"$ rpgm_switch_{sw} = {py_val}")
         return lines
@@ -554,7 +694,7 @@ class RenPyTranspiler:
                 return self._quote_str(op_value)
             return str(op_value)
         if op_type == 1:
-            return f"rpgm_var_{op_value}"
+            return self._rpgm_var_ref(op_value)
         if op_type == 2:
             return f"renpy.random.randint({op_value}, {op_value2})"
         if op_type == 3:
@@ -606,44 +746,68 @@ class RenPyTranspiler:
             return ""
         pic_id = params[0]
         pic_name = params[1] if len(params) > 1 else ""
-        tag = self._safe_identifier(pic_name) or f"pic_{pic_id}"
-        self.current_pictures[pic_id] = tag
+        raw_name = re.sub(r"^(bg[_-]|!)", "", pic_name, flags=re.I).strip()
+        if not raw_name:
+            return ""
+        tag = self._safe_identifier(raw_name).lower()
+        if not tag or tag == "_":
+            tag = f"pic_{pic_id}"
+        is_scene = self._is_background_picture(pic_name, tag)
+        self.current_pictures[pic_id] = (tag, is_scene)
+        if is_scene:
+            return f"scene {tag}"
         return f"show {tag}"
 
     def _handle_erase_picture(self, params):
         pic_id = params[0] if params else 1
         if pic_id in self.current_pictures:
-            tag = self.current_pictures.pop(pic_id)
+            tag, is_scene = self.current_pictures.pop(pic_id)
+            if is_scene:
+                return "scene"
             return f"hide {tag}"
         return ""
+
+    def _is_background_picture(self, pic_name, tag=None):
+        if not pic_name:
+            return False
+        name = str(pic_name).strip()
+        if re.match(r"^(bg[_-]|!)", name, flags=re.I):
+            return True
+        if re.match(r"^Act\s+\d+[/\\]", name, flags=re.I):
+            return True
+        if tag:
+            tag_l = str(tag).lower()
+            if tag_l.startswith("intro_") or re.match(r"^act_\d+_", tag_l):
+                return True
+        return False
 
     def _handle_play_bgm(self, params):
         bgm = params[0] if params else {}
         name = bgm.get("name", "") if isinstance(bgm, dict) else bgm
         if not name:
             return ""
-        return f'play music "{self._safe_filename(name)}"'
+        return f'play music "bgm/{self._safe_filename(name)}.ogg"'
 
     def _handle_play_bgs(self, params):
         bgs = params[0] if params else {}
         name = bgs.get("name", "") if isinstance(bgs, dict) else bgs
         if not name:
             return ""
-        return f'play sound "{self._safe_filename(name)}" loop'
+        return f'play sound "bgs/{self._safe_filename(name)}.ogg" loop'
 
     def _handle_play_me(self, params):
         me = params[0] if params else {}
         name = me.get("name", "") if isinstance(me, dict) else me
         if not name:
             return ""
-        return f'play sound "{self._safe_filename(name)}"'
+        return f'play sound "me/{self._safe_filename(name)}.ogg"'
 
     def _handle_play_se(self, params):
         se = params[0] if params else {}
         name = se.get("name", "") if isinstance(se, dict) else se
         if not name:
             return ""
-        return f'play sound "{self._safe_filename(name)}"'
+        return f'play sound "se/{self._safe_filename(name)}.ogg"'
 
     def _handle_movie(self, params):
         if not params:
@@ -691,12 +855,17 @@ class RenPyTranspiler:
             return []
         if script.startswith("//"):
             return []
+        plugin_result = self._plugins.handle_script(script)
+        if plugin_result is not None:
+            return plugin_result
         m = re.search(r"\$gameVariables\.setValue\(\s*(\d+)\s*,\s*(['\"`])(.*?)\2\s*\)", script, re.S)
         if m:
             var_id = int(m.group(1))
             text = m.group(3)
             if var_id == 21 and self.convert_dialogue_prefix:
-                return self._dialogue_from_variable(text)
+                dialogue_lines = self._dialogue_from_variable(text)
+                if dialogue_lines is not None:
+                    return dialogue_lines
             return [f"$ rpgm_var_{var_id} = {self._quote_str(text)}"]
         m2 = re.search(r"\$gameSwitches\.setValue\(\s*(\d+)\s*,\s*(true|false|0|1)\s*\)", script, re.I)
         if m2:
@@ -706,21 +875,21 @@ class RenPyTranspiler:
         return [f"# JS: {script}"]
 
     def _dialogue_from_variable(self, text):
+        """Converte una stringa in dialogo solo se il prefisso è un attore noto o \\N[x]."""
         text = self._unescape(text)
-        m = re.match(r"^([A-Za-z0-9_]+)\.(.*)$", text, re.S)
-        if m:
-            prefix = m.group(1)
-            body = m.group(2)
-            speaker = self._speaker_from_prefix(prefix)
-            return [f'{speaker} "{self._format_text(body)}"']
-        return [f'{self.default_character} "{self._format_text(text)}"']
-
-    def _speaker_from_prefix(self, prefix):
-        tokens = re.findall(r"[A-Z][a-z]*|[A-Z]+", prefix)
-        if not tokens:
-            return self.default_character
-        name = tokens[0]
-        return self._safe_identifier(name).lower()
+        m = re.match(r"^(?:\\\\N\[(\d+)\]|([A-Za-z][A-Za-z0-9_ ]*?))[\.:\#\<\>\!](.*)$", text, re.S)
+        if not m:
+            return None
+        actor_id = None
+        if m.group(1):
+            actor_id = int(m.group(1))
+        elif m.group(2):
+            actor_id = self._actor_name_to_id.get(m.group(2).strip().lower())
+        if actor_id is None or actor_id < 1:
+            return None
+        speaker = f"actor_{actor_id}"
+        body = m.group(3)
+        return [f'{speaker} "{self._format_text(body)}"']
 
     def _handle_plugin_command(self, params):
         if not params:
@@ -733,27 +902,10 @@ class RenPyTranspiler:
             return []
         plugin = params[0] if params else ""
         cmd = params[1] if len(params) > 1 else ""
-        if plugin == "DK_Video_Player":
-            args = params[3] if len(params) > 3 and isinstance(params[3], dict) else {}
-            src = self._safe_filename(args.get("src", ""))
-            loop = str(args.get("loop", "true")).lower() in ("true", "1", "yes")
-            wait = str(args.get("wait", "false")).lower() in ("true", "1", "yes")
-            if cmd == "LoadVideo" and src:
-                return [f'$ _renpg_video = rpgm_movie_path("movies/{src}")']
-            if cmd == "PlayVideo":
-                lines = []
-                if src:
-                    lines.append(f'$ _renpg_video = rpgm_movie_path("movies/{src}")')
-                if wait:
-                    lines.append("if _renpg_video:")
-                    lines.append("    $ rpgm_play_movie(_renpg_video)")
-                else:
-                    lines.append("if _renpg_video:")
-                    loop_arg = f", loop={loop}" if not loop else ""
-                    lines.append(f'    show expression Transform(Movie(play=_renpg_video{loop_arg}), xysize=(config.screen_width, config.screen_height), fit="contain", xalign=0.5, yalign=0.5) as renpg_video')
-                return lines
-            if cmd == "StopVideo":
-                return ["hide renpg_video"]
+        args = params[3] if len(params) > 3 and isinstance(params[3], dict) else {}
+        result = self._plugins.handle_command(plugin, cmd, args)
+        if result is not None:
+            return result
         return [f"# MZ Plugin {plugin}: {cmd}"]
 
     def _format_text(self, text):
@@ -767,10 +919,13 @@ class RenPyTranspiler:
         text = text.replace("{", "{{")
         text = text.replace("}", "}}")
         text = self._convert_rpgm_markup(text)
+        # Placeholder per nomi attore: \\N[1] -> [actor_1_name]
+        text = re.sub(r"\\\\N\[(\d+)\]", r"[actor_\1_name]", text, flags=re.IGNORECASE)
+        # Escape \N[...] residui o altri backslash prima di chiudere la stringa
         text = text.replace("\\", "\\\\")
         text = text.replace('"', '\\"')
-        # Escape Ren'Py interpolation and style characters
-        text = text.replace("[", "[[")
+        # Escape Ren'Py interpolation and style characters, preservando le nostre [actor_x_name]
+        text = re.sub(r"\[(?!actor_\d+_name\])", "[[", text)
         text = text.replace("%", "%%")
         return text
 
@@ -820,5 +975,9 @@ class RenPyTranspiler:
             name = "_" + name
         return name
 
+    def _rpgm_var_ref(self, vid):
+        """Restituisce il riferimento a una variabile RPG Maker, trattando id 0 come 0."""
+        return "0" if vid == 0 else f"rpgm_var_{vid}"
+
     def _safe_filename(self, name):
-        return re.sub(r"[^0-9A-Za-z_.-]+", "_", name or "").strip("_.")
+        return re.sub(r"[^0-9A-Za-z_.-]+", "_", name or "").strip("_.").lower()

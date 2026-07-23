@@ -13,6 +13,8 @@ from PIL import Image, ImageTk
 
 from .generator import RenpyProjectGenerator
 from . import sdk_manager
+from .strings_editor import extract_rpgm_strings, extract_renpy_script, StringItem
+from .string_edits import StringEditsStore
 
 
 # Palette estratta dal logo
@@ -26,6 +28,7 @@ COLOR_HOVER = "#e88a2a"
 COLOR_ORANGE = "#fc9c00"
 COLOR_ORANGE_HOVER = "#e88a2a"
 COLOR_TEAL = "#8d7356"
+COLOR_SUBTEXT = "#b0a69b"
 
 LOGO_PATH = Path(__file__).resolve().parent.parent / "img" / "logo_256.png"
 ICON_PATH = Path(__file__).resolve().parent.parent / "img" / "icon.iconset" / "icon_256x256.png"
@@ -68,6 +71,22 @@ TEXTS = {
         "tooltip_start_map": "ID of the starting map. Leave empty to use System.json.",
         "tooltip_include_events": "Comma or space separated list of event IDs to include. Leave empty for all.",
         "tooltip_no_prefix": "Disable extraction of the speaker name from variable prefixes.",
+        "strings_tab": "Strings",
+        "log_tab": "Log",
+        "load_game_strings": "Load from game data",
+        "load_script_strings": "Load from generated script",
+        "save_string_edits": "Save string edits",
+        "search": "Search:",
+        "search_placeholder": "Search strings...",
+        "delete_row": "Delete row",
+        "save_edit": "Save edit",
+        "edit_selected": "Edit selected string:",
+        "col_kind": "Kind",
+        "col_source": "Source",
+        "col_speaker": "Speaker",
+        "col_original": "Original",
+        "col_edited": "Edited",
+        "show_deleted": "Show deleted",
         "language": "Language",
         "sdk_section": "🎬 Ren'Py SDK",
         "sdk_path": "SDK path",
@@ -118,6 +137,22 @@ TEXTS = {
         "tooltip_start_map": "ID della mappa iniziale. Lascia vuoto per usare System.json.",
         "tooltip_include_events": "Elenco di ID eventi separati da virgola o spazio. Lascia vuoto per tutti.",
         "tooltip_no_prefix": "Disabilita l'estrazione del nome del personaggio dai prefissi delle variabili.",
+        "strings_tab": "Stringhe",
+        "log_tab": "Log",
+        "load_game_strings": "Carica dai dati gioco",
+        "load_script_strings": "Carica dallo script generato",
+        "save_string_edits": "Salva modifiche stringhe",
+        "search": "Cerca:",
+        "search_placeholder": "Cerca stringhe...",
+        "delete_row": "Elimina riga",
+        "save_edit": "Salva modifica",
+        "edit_selected": "Modifica stringa selezionata:",
+        "col_kind": "Tipo",
+        "col_source": "Sorgente",
+        "col_speaker": "Personaggio",
+        "col_original": "Originale",
+        "col_edited": "Modificata",
+        "show_deleted": "Mostra eliminate",
         "language": "Lingua",
         "sdk_section": "🎬 Ren'Py SDK",
         "sdk_path": "Percorso SDK",
@@ -168,6 +203,22 @@ TEXTS = {
         "tooltip_start_map": "ID del mapa inicial. Dejar vacío para usar System.json.",
         "tooltip_include_events": "Lista de IDs de eventos separados por coma o espacio. Dejar vacío para todos.",
         "tooltip_no_prefix": "Desactiva la extracción del nombre del personaje desde prefijos de variables.",
+        "strings_tab": "Cadenas",
+        "log_tab": "Registro",
+        "load_game_strings": "Cargar desde datos del juego",
+        "load_script_strings": "Cargar desde script generado",
+        "save_string_edits": "Guardar ediciones de cadenas",
+        "search": "Buscar:",
+        "search_placeholder": "Buscar cadenas...",
+        "delete_row": "Eliminar fila",
+        "save_edit": "Guardar edición",
+        "edit_selected": "Editar cadena seleccionada:",
+        "col_kind": "Tipo",
+        "col_source": "Fuente",
+        "col_speaker": "Personaje",
+        "col_original": "Original",
+        "col_edited": "Editado",
+        "show_deleted": "Mostrar eliminadas",
         "language": "Idioma",
         "sdk_section": "🎬 Ren'Py SDK",
         "sdk_path": "Ruta SDK",
@@ -269,8 +320,8 @@ class RenPGMakerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("RenPG Maker")
-        self.geometry("920x720")
-        self.minsize(820, 620)
+        self.geometry("1400x900")
+        self.minsize(1200, 750)
         self.configure(fg_color=COLOR_DARK)
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("dark-blue")
@@ -279,6 +330,12 @@ class RenPGMakerApp(ctk.CTk):
         self._locale = "it"
         self._text_refs: dict[str, object] = {}
         self._tooltips: list[Tooltip] = []
+        self._string_items: list[StringItem] = []
+        self._filtered_string_items: list[StringItem] = []
+        self._selected_string_index: int | None = None
+        self._strings_page: int = 0
+        self._strings_page_size: int = 100
+        self._last_project_dir: Path | None = None
         self._set_icon_and_logo()
         self._build_ui()
         self._update_texts()
@@ -668,17 +725,22 @@ class RenPGMakerApp(ctk.CTk):
         self.progress.pack(side="left", fill="x", expand=True, padx=(12, 0), pady=8)
         self.progress.set(0)
 
-        # Log
-        self.log_textbox = ctk.CTkTextbox(
+        # Tabs (Log + Strings)
+        self.tabs = ctk.CTkTabview(
             self,
-            height=120,
-            fg_color=COLOR_DARK,
+            fg_color=COLOR_SECONDARY,
+            segmented_button_fg_color=COLOR_PRIMARY,
+            segmented_button_selected_color=COLOR_ACCENT,
+            segmented_button_selected_hover_color=COLOR_HOVER,
+            segmented_button_unselected_color=COLOR_SECONDARY,
+            segmented_button_unselected_hover_color=COLOR_ACCENT,
             text_color=COLOR_TEXT,
-            border_color=COLOR_ACCENT,
-            border_width=1,
-            state="disabled",
         )
-        self.log_textbox.pack(fill="x", padx=14, pady=(4, 4))
+        self.tabs.pack(fill="both", expand=True, padx=14, pady=(4, 4))
+        self.tab_log = self.tabs.add(self._t("log_tab"))
+        self.tab_strings = self.tabs.add(self._t("strings_tab"))
+        self._build_log_tab()
+        self._build_strings_tab()
 
         # Stato
         self.status_label = ctk.CTkLabel(
@@ -689,6 +751,360 @@ class RenPGMakerApp(ctk.CTk):
             anchor="w",
         )
         self.status_label.pack(fill="x", padx=14, pady=(0, 8))
+
+    # ─── Log & Strings tabs ─────────────────────────────────────────────
+
+    def _build_log_tab(self):
+        self.log_textbox = ctk.CTkTextbox(
+            self.tab_log,
+            height=120,
+            fg_color=COLOR_DARK,
+            text_color=COLOR_TEXT,
+            border_color=COLOR_ACCENT,
+            border_width=1,
+            state="disabled",
+        )
+        self.log_textbox.pack(fill="both", expand=True, padx=8, pady=8)
+
+    def _build_strings_tab(self):
+        # Toolbar
+        toolbar = ctk.CTkFrame(self.tab_strings, fg_color=COLOR_PRIMARY, height=44)
+        toolbar.pack(fill="x", padx=8, pady=(8, 4))
+        toolbar.pack_propagate(False)
+
+        self._text_refs["load_game_strings"] = ctk.CTkButton(
+            toolbar,
+            text="",
+            width=160,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_HOVER,
+            border_width=1,
+            border_color=COLOR_ACCENT,
+            command=self._load_game_strings,
+        )
+        self._text_refs["load_game_strings"].pack(side="left", padx=(8, 4), pady=6)
+
+        self._text_refs["load_script_strings"] = ctk.CTkButton(
+            toolbar,
+            text="",
+            width=180,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_HOVER,
+            border_width=1,
+            border_color=COLOR_ACCENT,
+            command=self._load_script_strings,
+        )
+        self._text_refs["load_script_strings"].pack(side="left", padx=4, pady=6)
+
+        self._text_refs["save_string_edits"] = ctk.CTkButton(
+            toolbar,
+            text="",
+            width=140,
+            fg_color=COLOR_ORANGE,
+            hover_color=COLOR_ORANGE_HOVER,
+            text_color="white",
+            command=self._save_string_edits,
+        )
+        self._text_refs["save_string_edits"].pack(side="left", padx=4, pady=6)
+
+        self._strings_search_var = ctk.StringVar()
+        self._strings_search_var.trace_add("write", lambda *_: self._apply_string_filter())
+        self._strings_search_entry = ctk.CTkEntry(
+            toolbar,
+            width=180,
+            textvariable=self._strings_search_var,
+            placeholder_text=self._t("search_placeholder"),
+            fg_color=COLOR_DARK,
+            border_color=COLOR_ACCENT,
+        )
+        self._strings_search_entry.pack(side="right", padx=(8, 4), pady=6)
+
+        self._show_deleted_var = ctk.BooleanVar(value=False)
+        self._show_deleted_check = ctk.CTkCheckBox(
+            toolbar,
+            text="",
+            variable=self._show_deleted_var,
+            command=self._apply_string_filter,
+            text_color=COLOR_TEXT,
+        )
+        self._text_refs["show_deleted"] = self._show_deleted_check
+        self._show_deleted_check.pack(side="right", padx=4, pady=6)
+
+        # Table
+        self._strings_table_frame = ctk.CTkScrollableFrame(
+            self.tab_strings, fg_color=COLOR_DARK
+        )
+        self._strings_table_frame.pack(fill="both", expand=True, padx=8, pady=(4, 4))
+        self._strings_content_frame = ctk.CTkFrame(
+            self._strings_table_frame, fg_color=COLOR_DARK
+        )
+        self._strings_content_frame.pack(fill="x", expand=True)
+
+        # Editor
+        editor = ctk.CTkFrame(self.tab_strings, fg_color=COLOR_PRIMARY, height=140)
+        editor.pack(fill="x", padx=8, pady=(4, 8))
+        editor.pack_propagate(False)
+
+        self._text_refs["edit_selected"] = ctk.CTkLabel(
+            editor, text="", text_color=COLOR_TEXT, font=ctk.CTkFont(size=11)
+        )
+        self._text_refs["edit_selected"].pack(anchor="w", padx=10, pady=(8, 2))
+
+        self._string_edit_text = ctk.CTkTextbox(
+            editor,
+            height=60,
+            fg_color=COLOR_DARK,
+            text_color=COLOR_TEXT,
+            border_color=COLOR_ACCENT,
+            border_width=1,
+        )
+        self._string_edit_text.pack(fill="x", padx=10, pady=(0, 6))
+
+        btn_row = ctk.CTkFrame(editor, fg_color="transparent")
+        btn_row.pack(fill="x", padx=10, pady=(0, 6))
+
+        self._text_refs["save_edit"] = ctk.CTkButton(
+            btn_row,
+            text="",
+            width=100,
+            fg_color=COLOR_ORANGE,
+            hover_color=COLOR_ORANGE_HOVER,
+            text_color="white",
+            command=self._save_string_edit,
+        )
+        self._text_refs["save_edit"].pack(side="left", padx=(0, 6))
+
+        self._text_refs["delete_row"] = ctk.CTkButton(
+            btn_row,
+            text="",
+            width=100,
+            fg_color="#dc2626",
+            hover_color="#b91c1c",
+            text_color="white",
+            command=self._delete_selected_string,
+        )
+        self._text_refs["delete_row"].pack(side="left")
+
+    def _render_strings_table(self):
+        for w in self._strings_content_frame.winfo_children():
+            w.destroy()
+
+        header = ctk.CTkFrame(self._strings_content_frame, fg_color=COLOR_ACCENT)
+        header.pack(fill="x", pady=(0, 2))
+        cols = [
+            (self._t("col_kind"), 100),
+            (self._t("col_source"), 180),
+            (self._t("col_speaker"), 160),
+            (self._t("col_original"), 430),
+            (self._t("col_edited"), 430),
+        ]
+        for text, width in cols:
+            ctk.CTkLabel(
+                header, text=text, width=width,
+                font=ctk.CTkFont(weight="bold"), anchor="w", text_color=COLOR_TEXT
+            ).pack(side="left", padx=4, pady=4)
+
+        total = len(self._filtered_string_items)
+        total_pages = max(1, (total + self._strings_page_size - 1) // self._strings_page_size)
+        self._strings_page = max(0, min(self._strings_page, total_pages - 1))
+        start = self._strings_page * self._strings_page_size
+        end = start + self._strings_page_size
+        page_items = self._filtered_string_items[start:end]
+
+        for local_idx, item in enumerate(page_items):
+            abs_idx = start + local_idx
+            bg = COLOR_PRIMARY if abs_idx % 2 == 0 else COLOR_SECONDARY
+            if abs_idx == self._selected_string_index:
+                bg = COLOR_HOVER
+            row = ctk.CTkFrame(self._strings_content_frame, fg_color=bg, height=28)
+            row.pack(fill="x")
+            row.pack_propagate(False)
+
+            values = [
+                item.kind,
+                item.source_file,
+                item.speaker,
+                item.original[:70],
+                item.display_text[:70],
+            ]
+            for val, (text, width) in zip(values, cols):
+                lbl = ctk.CTkLabel(
+                    row, text=str(val), width=width, anchor="w",
+                    text_color=COLOR_TEXT if item.edited else COLOR_SUBTEXT,
+                    font=ctk.CTkFont(size=11),
+                )
+                lbl.pack(side="left", padx=4, pady=2)
+            row.bind("<Button-1>", lambda e, i=abs_idx: self._on_string_row_click(i))
+            for child in row.winfo_children():
+                child.bind("<Button-1>", lambda e, i=abs_idx: self._on_string_row_click(i))
+
+        # Pagination
+        pag = ctk.CTkFrame(self._strings_content_frame, fg_color=COLOR_PRIMARY, height=32)
+        pag.pack(fill="x", pady=(4, 0))
+        pag.pack_propagate(False)
+        ctk.CTkButton(
+            pag, text="◀", width=36, fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_HOVER, command=self._prev_strings_page,
+        ).pack(side="left", padx=6, pady=4)
+        page_label = ctk.CTkLabel(
+            pag,
+            text=f"Page {self._strings_page + 1} / {total_pages}  ({total} strings)",
+            text_color=COLOR_SUBTEXT,
+            font=ctk.CTkFont(size=11),
+        )
+        page_label.pack(side="left", padx=8)
+        ctk.CTkButton(
+            pag, text="▶", width=36, fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_HOVER, command=self._next_strings_page,
+        ).pack(side="left", padx=2, pady=4)
+
+    def _prev_strings_page(self):
+        if self._strings_page > 0:
+            self._strings_page -= 1
+            self._render_strings_table()
+
+    def _next_strings_page(self):
+        total = len(self._filtered_string_items)
+        total_pages = max(1, (total + self._strings_page_size - 1) // self._strings_page_size)
+        if self._strings_page < total_pages - 1:
+            self._strings_page += 1
+            self._render_strings_table()
+
+    def _on_string_row_click(self, idx: int):
+        self._selected_string_index = idx
+        item = self._filtered_string_items[idx]
+        self._render_strings_table()
+        self._string_edit_text.configure(state="normal")
+        self._string_edit_text.delete("1.0", "end")
+        self._string_edit_text.insert("end", item.edited if item.edited else item.original)
+
+    def _apply_string_filter(self):
+        query = self._strings_search_var.get().strip().casefold()
+        show_deleted = self._show_deleted_var.get()
+        filtered = []
+        for item in self._string_items:
+            if item.deleted and not show_deleted:
+                continue
+            if query:
+                haystack = (item.original + " " + item.edited).casefold()
+                if query not in haystack:
+                    continue
+            filtered.append(item)
+        self._filtered_string_items = filtered
+        self._selected_string_index = None
+        self._strings_page = 0
+        self._render_strings_table()
+
+    def _load_game_strings(self):
+        game_raw = self.game_entry.get().strip()
+        if not game_raw:
+            messagebox.showerror(self._t("error"), self._t("select_game"))
+            return
+        data_dir = find_data_dir(Path(game_raw))
+        if data_dir is None:
+            messagebox.showerror(self._t("error"), self._t("data_not_found").format(game_raw))
+            return
+        self._string_items = extract_rpgm_strings(str(data_dir))
+        self._load_existing_string_edits()
+        self._apply_string_filter()
+        self._set_status(f"Loaded {len(self._string_items)} strings from game data.")
+
+    def _load_script_strings(self):
+        script_path = self._get_project_script_path()
+        if script_path is None or not script_path.is_file():
+            messagebox.showerror(self._t("error"), "Generated script.rpy not found. Convert the project first.")
+            return
+        self._string_items = extract_renpy_script(str(script_path))
+        self._load_existing_string_edits()
+        self._apply_string_filter()
+        self._set_status(f"Loaded {len(self._string_items)} strings from script.rpy.")
+
+    def _load_existing_string_edits(self):
+        project_dir = self._get_project_dir()
+        if project_dir is None:
+            return
+        store = StringEditsStore(str(project_dir))
+        edits = store.load()
+        # Decide which section to apply based on current source
+        section = "renpy" if any(i.source_file == "script.rpy" for i in self._string_items[:1]) else "rpgm"
+        file_edits = edits.get(section, {})
+        for item in self._string_items:
+            lookup = file_edits.get(item.source_file, {})
+            change = lookup.get(item.sid)
+            if change:
+                if change.get("deleted"):
+                    item.deleted = True
+                if "text" in change:
+                    item.edited = change["text"]
+
+    def _save_string_edit(self):
+        if self._selected_string_index is None:
+            return
+        item = self._filtered_string_items[self._selected_string_index]
+        new_text = self._string_edit_text.get("1.0", "end-1c")
+        if new_text != item.original:
+            item.edited = new_text
+        else:
+            item.edited = ""
+        self._render_strings_table()
+
+    def _delete_selected_string(self):
+        if self._selected_string_index is None:
+            return
+        item = self._filtered_string_items[self._selected_string_index]
+        item.deleted = not item.deleted
+        self._render_strings_table()
+
+    def _save_string_edits(self):
+        project_dir = self._get_project_dir()
+        if project_dir is None:
+            messagebox.showerror(self._t("error"), self._t("select_output"))
+            return
+        section = "renpy" if any(i.source_file == "script.rpy" for i in self._string_items[:1]) else "rpgm"
+        store = StringEditsStore(str(project_dir))
+        edits = store.load()
+        section_edits = {}
+        for item in self._string_items:
+            if not item.edited and not item.deleted:
+                continue
+            file_map = section_edits.setdefault(item.source_file, {})
+            change = {}
+            if item.deleted:
+                change["deleted"] = True
+            if item.edited:
+                change["text"] = item.edited
+            file_map[item.sid] = change
+        edits[section] = section_edits
+        store.save(edits)
+        self._set_status(f"Saved {sum(len(v) for v in section_edits.values())} edits to {store.path}")
+
+    def _get_project_dir(self) -> Path | None:
+        output_raw = self.output_entry.get().strip()
+        game_raw = self.game_entry.get().strip()
+        if not output_raw:
+            return None
+        if self._last_project_dir is not None and self._last_project_dir.exists():
+            return self._last_project_dir
+        if game_raw:
+            data_dir = find_data_dir(Path(game_raw))
+            if data_dir is not None:
+                system_json = data_dir / "System.json"
+                raw_title = "RPGM VN"
+                if system_json.is_file():
+                    try:
+                        with open(system_json, "r", encoding="utf-8-sig") as f:
+                            raw_title = json.load(f).get("gameTitle") or raw_title
+                    except Exception:
+                        pass
+                safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", raw_title).lower() or "rpgm_vn"
+                return Path(output_raw) / safe_name
+        return None
+
+    def _get_project_script_path(self) -> Path | None:
+        project_dir = self._get_project_dir()
+        if project_dir is None:
+            return None
+        return project_dir / "game" / "script.rpy"
 
     # ─── Actions ─────────────────────────────────────────────────────────
 
@@ -909,6 +1325,7 @@ class RenPGMakerApp(ctk.CTk):
         self.log_textbox.configure(state="disabled")
 
     def _on_build_success(self, output_dir: Path, build_dir: Path):
+        self._last_project_dir = output_dir
         self.progress.stop()
         self.progress.set(0)
         self._set_status(f"✅ {self._t('build_success').format(build_dir)}")

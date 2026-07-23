@@ -5,6 +5,9 @@ from pathlib import Path
 from .parser import RpgmData
 from .transpiler import RenPyTranspiler
 from .assets import AssetManager
+from .map_renderer import MapRenderer
+from .string_edits import StringEditsStore
+from .strings_editor import apply_edits_to_rpgm_data, apply_edits_to_script_lines
 
 
 class RenpyProjectGenerator:
@@ -17,13 +20,13 @@ class RenpyProjectGenerator:
         self.cancel_event = cancel_event
 
         self.data = RpgmData(data_dir)
+        self.output_width, self.output_height = self._output_size()
 
         # Template base integrato nel package (o custom passato dal chiamante).
         if template_dir:
             self.template_dir = template_dir
         else:
-            _, height = self.data.window_size()
-            template_name = "720" if height == 720 else "1080"
+            template_name = "720" if self.output_height <= 720 else "1080"
             self.template_dir = str(
                 Path(__file__).resolve().parent / "templates" / template_name / "game"
             )
@@ -55,8 +58,29 @@ class RenpyProjectGenerator:
         if self.cancel_event and self.cancel_event.is_set():
             return
 
+        # Applica eventuali modifiche manuali ai dati RPG Maker (in memoria).
+        edits_store = StringEditsStore(self.output_dir)
+        edits = edits_store.load()
+        rpgm_edits = edits.get("rpgm", {})
+        if rpgm_edits:
+            for filename, file_edits in rpgm_edits.items():
+                if filename == "CommonEvents.json" and self.data.common_events:
+                    apply_edits_to_rpgm_data(self.data.common_events, file_edits)
+                elif filename.startswith("Map") and filename.endswith(".json"):
+                    try:
+                        map_id = int(filename[3:-5])
+                    except ValueError:
+                        continue
+                    map_data = self.data.get_map(map_id)
+                    if map_data:
+                        apply_edits_to_rpgm_data(map_data, file_edits)
+
         # Pre-transpile all scripts and collect characters used.
-        script_blocks, character_ids = self._build_scripts()
+        script_blocks, character_ids, character_faces = self._build_scripts()
+
+        # Render map backgrounds and insert scene commands at map labels.
+        map_bg_ids = self._render_map_backgrounds(game_dir)
+        self._insert_map_scenes(script_blocks, map_bg_ids)
 
         if self.cancel_event and self.cancel_event.is_set():
             return
@@ -65,8 +89,14 @@ class RenpyProjectGenerator:
         with open(os.path.join(game_dir, "options.rpy"), "w", encoding="utf-8") as f:
             f.write(self._options_rpy())
 
+        script_content = self._script_rpy(character_ids, character_faces, map_bg_ids, script_blocks)
+        renpy_edits = edits.get("renpy", {}).get("script.rpy", {})
+        if renpy_edits:
+            script_lines = script_content.splitlines()
+            script_lines = apply_edits_to_script_lines(script_lines, renpy_edits)
+            script_content = "\n".join(script_lines)
         with open(os.path.join(game_dir, "script.rpy"), "w", encoding="utf-8") as f:
-            f.write(self._script_rpy(character_ids, script_blocks))
+            f.write(script_content)
 
         # Copy assets.
         self.asset_manager.copy_assets()
@@ -110,7 +140,32 @@ class RenpyProjectGenerator:
                     blocks[f"map{map_id:03d}"] = result
                     characters.update(self._collect_characters(result))
 
-        return blocks, characters
+        return blocks, characters, self.transpiler.character_faces
+
+    def _render_map_backgrounds(self, game_dir):
+        """Render map PNGs and return the set of map ids that succeeded."""
+        try:
+            renderer = MapRenderer(self.data)
+            target = (self.output_width, self.output_height)
+            return renderer.render_all(game_dir, target_size=target)
+        except Exception:
+            return set()
+
+    def _insert_map_scenes(self, script_blocks, map_bg_ids):
+        """Prepend scene map_bg_<id> to each map label block."""
+        for map_id in sorted(map_bg_ids):
+            key = f"map{map_id:03d}"
+            if key not in script_blocks:
+                continue
+            lines = script_blocks[key]
+            if not lines:
+                continue
+            # Insert the scene right after the label line.
+            scene_line = f"    scene map_bg_{map_id:03d}"
+            if len(lines) > 1:
+                lines.insert(1, scene_line)
+            else:
+                lines.append(scene_line)
 
     def _collect_characters(self, lines):
         ids = set()
@@ -125,11 +180,25 @@ class RenpyProjectGenerator:
                 ids.add(m2.group(1))
         return ids
 
+    def _output_size(self):
+        width = self.options.get("output_width")
+        height = self.options.get("output_height")
+        if width is None or height is None:
+            width, height = self.data.window_size()
+        try:
+            width = int(width)
+            height = int(height)
+        except (TypeError, ValueError):
+            return 1920, 1080
+        if width <= 0 or height <= 0:
+            return 1920, 1080
+        return width, height
+
     def _options_rpy(self):
         raw_title = self.data.game_title() or "RPGM VN"
         title = raw_title.replace("\\", "\\\\").replace('"', '\\"')
         safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", raw_title).lower() or "rpgm_vn"
-        width, height = self.data.window_size()
+        width, height = self.output_width, self.output_height
         bgm_name = self.data.title_bgm_name()
         main_menu_music_line = ""
         if bgm_name:
@@ -184,16 +253,18 @@ init python:
         return None
 '''
 
-    def _script_rpy(self, character_ids, blocks):
+    def _script_rpy(self, character_ids, character_faces, map_bg_ids, blocks):
         out = ["# Script generato da rpgm2vn", ""]
         max_vars = len(self.data.system.get("variables", []))
         max_sw = len(self.data.system.get("switches", []))
+        out.append("default rpgm_var_0 = 0")
         for _i in range(1, max_vars + 1):
             out.append(f"default rpgm_var_{_i} = 0")
         for _i in range(1, max_sw + 1):
             out.append(f"default rpgm_switch_{_i} = False")
         out.append("default party_members = []")
         out.append("default _renpg_video = None")
+        out.append("define flash = Fade(0.1, 0.1, 0.1, color='#fff')")
         out.append("")
 
         # Character definitions
@@ -204,6 +275,7 @@ init python:
             aid = actor.get("id", 0)
             tag = f"actor_{aid}"
             out.append(f'define {tag} = Character({_escape_str(name)})')
+            out.append(f'default {tag}_name = {_escape_str(name)}')
 
         # Also define any other speakers encountered
         for cid in sorted(character_ids):
@@ -211,7 +283,17 @@ init python:
                 continue
             if cid == "narrator":
                 continue
-            out.append(f'define {cid} = Character({_escape_str(cid.replace("_", " ").title())})')
+            img_arg = f', image="{cid}"' if cid in character_faces else ""
+            out.append(f'define {cid} = Character({_escape_str(cid.replace("_", " ").title())}{img_arg})')
+
+        # Side images for faces
+        for tag, face_name in sorted(character_faces.items()):
+            if tag and face_name:
+                out.append(f'image {tag} = "faces/{face_name}"')
+
+        # Map backgrounds
+        for map_id in sorted(map_bg_ids):
+            out.append(f'image map_bg_{map_id:03d} = "map_bg/map_{map_id:03d}.png"')
 
         out.append("")
 
@@ -232,7 +314,21 @@ init python:
         return "\n".join(out) + "\n"
 
     def _copy_template(self, game_dir):
-        """Copia tutto il template base Ren'Py nella cartella game di output."""
+        """Copia tutto il template base Ren'Py nella cartella game di output.
+
+        Prima rimuove i file esistenti per evitare che un template a 1080
+        lasci residui (es. immagini gui) in un progetto generato a 720.
+        """
+        game_path = Path(game_dir)
+        if game_path.is_dir():
+            for entry in game_path.iterdir():
+                if entry.is_dir():
+                    shutil.rmtree(entry, ignore_errors=True)
+                else:
+                    try:
+                        entry.unlink()
+                    except OSError:
+                        pass
         src = Path(self.template_dir) if self.template_dir else None
         if not src or not src.is_dir():
             raise FileNotFoundError(f"Template base non trovato: {self.template_dir}")
@@ -246,6 +342,16 @@ init python:
                 "cache", "saves", "*.rpyc", "*.rpyb", "*.rpymc", ".DS_Store", ".gitignore"
             ),
         )
+        gui_path = Path(game_dir) / "gui.rpy"
+        if gui_path.is_file():
+            gui_text = gui_path.read_text(encoding="utf-8")
+            gui_text = re.sub(
+                r"gui\.init\(\d+, \d+\)",
+                f"gui.init({self.output_width}, {self.output_height})",
+                gui_text,
+                count=1,
+            )
+            gui_path.write_text(gui_text, encoding="utf-8")
 
     def _copy_splash(self, game_dir):
         splash_src = Path(__file__).resolve().parent.parent / "img" / "splash.png"
@@ -282,14 +388,17 @@ label before_main_menu:
         seen = set()
         for root, dirs, files in os.walk(images_dir):
             dirs.sort()
+            if os.path.basename(root) == "map_bg":
+                continue
             for fname in sorted(files):
                 ext = os.path.splitext(fname)[1].lower()
                 if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"):
                     continue
                 full = os.path.join(root, fname)
                 rel = os.path.relpath(full, game_dir).replace("\\", "/")
-                tag = os.path.splitext(fname)[0]
-                if tag in seen:
+                raw_tag = re.sub(r"^(bg[_-]|!)", "", os.path.splitext(fname)[0], flags=re.I)
+                tag = self.transpiler._safe_identifier(raw_tag)
+                if not tag or tag == "_" or tag in seen:
                     continue
                 seen.add(tag)
                 out_lines.append(f'image {tag} = "{rel}"\n')
